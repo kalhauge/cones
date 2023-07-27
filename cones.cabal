@@ -1,0 +1,44 @@
+cabal-version: 1.12
+
+-- This file has been generated from package.yaml by hpack version 0.35.2.
+--
+-- see: https://github.com/sol/hpack
+
+name:           cones
+version:        0.1.0
+synopsis:       A library for defining cones.
+description:    A library for defining cones.
+author:         Christian Gram Kalhauge
+maintainer:     Christian Gram Kalhauge <chrg@dtu.dk>
+license:        BSD3
+license-file:   LICENSE
+build-type:     Simple
+extra-source-files:
+    LICENSE
+    package.yaml
+    README.md
+
+library
+  exposed-modules:
+      Data.Cone
+  other-modules:
+      Paths_cones
+  hs-source-dirs:
+      src
+  ghc-options: -Wall
+  build-depends:
+      base >=4.10 && <4.18
+  default-language: Haskell2010
+
+test-suite cones-test
+  type: exitcode-stdio-1.0
+  main-is: Main.hs
+  other-modules:
+      Paths_cones
+  hs-source-dirs:
+      test
+  ghc-options: -Wall
+  build-depends:
+      base >=4.10 && <4.18
+    , cones
+  default-language: Haskell2010
