@@ -1,2 +1,3 @@
-:set -fwarn-unused-binds -fwarn-unused-imports -fWall
+:set -fwarn-unused-binds -fwarn-unused-imports -fWall 
+:set -ddump-splices
 :set -isrc

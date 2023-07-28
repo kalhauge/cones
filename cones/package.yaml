@@ -1,0 +1,35 @@
+name: cones
+version: '0.1.0'
+author: Christian Gram Kalhauge
+maintainer: "Christian Gram Kalhauge <chrg@dtu.dk>"
+synopsis: A library for defining cones.
+license: BSD3
+license-file: LICENSE
+# category: missing
+# github: tbd
+
+description: |
+  A library for defining cones.
+
+ghc-options: 
+- -Wall
+
+extra-source-files:
+  - LICENSE
+  - package.yaml
+  - README.md
+
+dependencies:
+  - base >= 4.10 && < 4.18
+  - template-haskell
+
+library:
+  source-dirs: src
+
+tests:
+  cones-test:
+    source-dirs: test
+    main: Main.hs
+    dependencies: 
+      - cones
+

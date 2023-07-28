@@ -12,7 +12,8 @@
     flake-utils.lib.eachDefaultSystem (system:
     let
       packages = p: {
-        "cones" = p.callCabal2nixWithOptions "cones" self "" { };
+        "cones" = p.callCabal2nixWithOptions "cones" "${self}/cones" "" { };
+        "conedec" = p.callCabal2nixWithOptions "conedec" "${self}/conedec" "" { };
       };
       overlays = final: prev: {
         haskellPackages = prev.haskellPackages.override
@@ -32,7 +33,7 @@
         {
           name = "cones-shell";
           packages = p:
-            [ p.cones ];
+            [ p.cones p.conedec ];
           # doBenchmark = true;
           withHoogle = true;
           buildInputs = (with hpkgs; [
