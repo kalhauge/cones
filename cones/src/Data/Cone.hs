@@ -1,4 +1,7 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -17,16 +20,21 @@ module Data.Cone (
   -- $cones
   Cone,
   IsLimit (..),
+  eject,
   limitIdentity,
 
   -- * Cocones and Colimits
   -- $cocones
   Cocone,
   IsColimit (..),
+  coeject,
   colimitIdentity,
 ) where
 
 -- base
+
+import Barbies
+import Control.Applicative
 import Data.Functor.Contravariant
 import Data.Kind
 import GHC.Generics (Generic)
@@ -71,14 +79,16 @@ data instance Diagram (Either a b) f = EitherD
   { ifLeft :: f a
   , ifRight :: f b
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
 -- | The diagram for the product
 data instance Diagram (a, b) f = D2
   { getFstOf2 :: f a
   , getSndOf2 :: f b
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
 -- | The diagram for the 3 tuple
 data instance Diagram (a, b, c) f = D3
@@ -86,7 +96,8 @@ data instance Diagram (a, b, c) f = D3
   , getSndOf3 :: f b
   , getTrdOf3 :: f c
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
 -- | The diagram for the 4 tuple
 data instance Diagram (a, b, c, d) f = D4
@@ -95,7 +106,8 @@ data instance Diagram (a, b, c, d) f = D4
   , getTrdOf4 :: f c
   , getFthOf4 :: f d
   }
-  deriving (Show, Eq, Generic)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
 {- $cones
 
@@ -112,7 +124,7 @@ Laws:
 factor cone = id
 @
 -}
-class IsLimit a where
+class ApplicativeB (Diagram a) => IsLimit a where
   -- | @a@ has a cone.
   cone :: Cone a a
 
@@ -122,6 +134,15 @@ class IsLimit a where
 instance IsLimit (a, b) where
   cone = D2{getFstOf2 = fst, getSndOf2 = snd}
   factor D2{..} b = (getFstOf2 b, getSndOf2 b)
+
+{- | Use the limit ability to extract an application of the
+    contravariant functor @g@ on the limit for each element in the diagram.
+-}
+eject
+  :: (IsLimit a, Contravariant g)
+  => Diagram a g
+  -> Diagram a (Const (g a))
+eject = bzipWith (\fn cd -> Const $ fn >$< cd) cone
 
 {- | Used to calculate the identity using a limit, only really usefull for
 testing that limits are created correctly.
@@ -152,7 +173,7 @@ Laws:
 cofactor cocone = id
 @
 -}
-class IsColimit a where
+class ApplicativeB (Diagram a) => IsColimit a where
   -- | @a@ has a cocone.
   cocone :: Cocone a a
 
@@ -177,3 +198,12 @@ instance IsColimit (Either a b) where
   cofactor EitherD{..} = \case
     Left a -> getOp ifLeft a
     Right a -> getOp ifRight a
+
+{- | Use the colimit ability to extract an application of the functor
+ @g@ on the colimit for each element in the diagram.
+-}
+coeject
+  :: (IsColimit a, Functor g)
+  => Diagram a g
+  -> Diagram a (Const (g a))
+coeject = bzipWith (\(Op fn) cd -> Const $ fn <$> cd) cocone

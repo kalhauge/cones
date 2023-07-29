@@ -22,7 +22,10 @@ dependencies:
   - base >= 4.10 && < 4.18
   - cones
   - aeson
+  - scientific
+  - vector
   - text
+  - barbies
 
 library:
   source-dirs: src

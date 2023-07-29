@@ -16,11 +16,9 @@
         "conedec" = p.callCabal2nixWithOptions "conedec" "${self}/conedec" "" { };
       };
       overlays = final: prev: {
-        haskellPackages = prev.haskellPackages.override
-          (old: {
-            overrides = final.lib.composeExtensions (old.overrides or (_: _: { }))
-              (p: _: packages p);
-          });
+        haskellPackages = prev.haskellPackages.extend
+          # (final.lib.composeExtensions (old.overrides or (_: _: { }))
+          (p: _: packages p);
       };
       hpkgs = (import nixpkgs {
         inherit system;
@@ -28,12 +26,31 @@
       }).haskellPackages;
     in
     rec {
-      packages.default = hpkgs.cones;
+      packages = {
+        default = hpkgs.cones;
+        cones = hpkgs.cones;
+        conedec = hpkgs.conedec;
+      };
       devShells.default = hpkgs.shellFor
         {
           name = "cones-shell";
           packages = p:
             [ p.cones p.conedec ];
+          # doBenchmark = true;
+          withHoogle = true;
+          buildInputs = (with hpkgs; [
+            cabal-install
+            ghcid
+            haskell-language-server
+            hpack
+            fourmolu
+          ]);
+        };
+      devShells.conedec = hpkgs.shellFor
+        {
+          name = "conedec-shell";
+          packages = p:
+            [ p.conedec ];
           # doBenchmark = true;
           withHoogle = true;
           buildInputs = (with hpkgs; [
