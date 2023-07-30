@@ -18,6 +18,7 @@ module Conedec where
 -- base
 import Control.Applicative
 import Data.Bifunctor
+import Data.Functor.Compose
 import Data.Functor.Contravariant
 import Data.Monoid
 
@@ -37,9 +38,7 @@ import qualified Data.Text as Text
 
 -- cones
 import Data.Cone
-
--- | Ordering of a diagram
-type Order a = forall m. Applicative m => Diagram a m -> m a
+import Data.Functor.Identity
 
 -- | The codec, used to implement `toJSON`, `fromJSON`, and `toEncoding`
 data Codec t where
@@ -59,7 +58,7 @@ data Codec t where
   -- | A codec of a sum of types.
   AnyOfCodec
     :: (IsColimit a)
-    => Order a
+    => DiagramOrder a
     -> Diagram a Codec
     -> Codec a
   -- | A codec that parses a an array of the same type
@@ -81,12 +80,12 @@ data Codec t where
 data ArrayCodec a where
   ProductArrayCodec
     :: (IsLimit a)
-    => Order a
+    => DiagramOrder a
     -> Diagram a ArrayCodec
     -> ArrayCodec a
   AnyOfArrayCodec
     :: (IsColimit a)
-    => Order a
+    => DiagramOrder a
     -> Diagram a ArrayCodec
     -> ArrayCodec a
   ElementCodec
@@ -96,12 +95,12 @@ data ArrayCodec a where
 data ObjectCodec a where
   ProductObjectCodec
     :: (IsLimit a)
-    => (forall m. Applicative m => Diagram a m -> m a)
+    => DiagramOrder a
     -> Diagram a ObjectCodec
     -> ObjectCodec a
   AnyOfObjectCodec
     :: (IsColimit a)
-    => Order a
+    => DiagramOrder a
     -> Diagram a ObjectCodec
     -> ObjectCodec a
   FieldCodec
@@ -118,7 +117,7 @@ toJSONViaCodec = \case
   ArrayCodec a ->
     Array . toJSONArrayViaCodec a
   ObjectCodec oc ->
-    object . toJSONObjectViaCodec oc
+    Aeson.object . toJSONObjectViaCodec oc
   EmptyCodec -> \_ -> error "empty codec"
   NullCodec -> \case
     () -> Null
@@ -130,7 +129,7 @@ toJSONViaCodec = \case
 toJSONArrayViaCodec :: ArrayCodec t -> t -> Array
 toJSONArrayViaCodec = \case
   ProductArrayCodec order diag ->
-    foldOf order . bmap (Op . toJSONArrayViaCodec) $ diag
+    foldOfLimit order toJSONArrayViaCodec diag
   AnyOfArrayCodec _ diag ->
     cofactor . bmap (Op . toJSONArrayViaCodec) $ diag
   ElementCodec cd ->
@@ -139,22 +138,16 @@ toJSONArrayViaCodec = \case
 toJSONObjectViaCodec :: ObjectCodec t -> t -> [Pair]
 toJSONObjectViaCodec = \case
   ProductObjectCodec order diag ->
-    foldOf order . bmap (Op . toJSONObjectViaCodec) $ diag
+    foldOfLimit order toJSONObjectViaCodec diag
   AnyOfObjectCodec _ diag ->
     cofactor . bmap (Op . toJSONObjectViaCodec) $ diag
   FieldCodec name cd -> \t ->
     pure (name, toJSONViaCodec cd t)
 
-anyOf :: (IsColimit a, Alternative f) => Order a -> Diagram a f -> f a
-anyOf order = getAlt . getConst . order . bmap (first Alt) . coeject
-
-foldOf :: (IsLimit a, Monoid m) => Order a -> Diagram a (Op m) -> a -> m
-foldOf order diag a = getConst . order . bmap (first (`getOp` a)) . eject $ diag
-
 parseJSONViaCodec :: forall t. Codec t -> Value -> Parser t
 parseJSONViaCodec = \case
   AnyOfCodec order diag -> \v ->
-    anyOf order . bmap (`parseJSONViaCodec` v) $ diag
+    altOfColimit order . bmap (`parseJSONViaCodec` v) $ diag
   ManyOfCodec cd -> \case
     Array arr -> V.mapM (parseJSONViaCodec cd) arr
     v -> typeMismatch "Array" v
@@ -191,9 +184,9 @@ mkObjectParser fn key = ObjectParser \obj ->
 parseJSONArrayViaCodec :: ArrayCodec t -> ArrayParser t
 parseJSONArrayViaCodec = \case
   ProductArrayCodec order diag ->
-    order . bmap parseJSONArrayViaCodec $ diag
+    appOfLimit order . bmap parseJSONArrayViaCodec $ diag
   AnyOfArrayCodec order diag ->
-    anyOf order . bmap parseJSONArrayViaCodec $ diag
+    altOfColimit order . bmap parseJSONArrayViaCodec $ diag
   ElementCodec cd ->
     mkArrayParser (parseJSONViaCodec cd)
 
@@ -220,3 +213,23 @@ instance Alternative ArrayParser where
   empty = ArrayParser (\_ _ -> empty)
   ArrayParser f <|> ArrayParser g = ArrayParser \a n ->
     f a n <|> g a n
+
+{- $builders
+These are the buidlers:
+-}
+
+object :: ObjectCodec t -> Codec t
+object = ObjectCodec
+
+class HasPrimitives c where
+  text :: c Text.Text
+  bool :: c Bool
+
+class HasEmptyDiagram c where
+  def :: Diagram a c
+
+class HasProductCodec c where
+  product :: (IsLimit a, TraversableB (Diagram a)) => Diagram a c -> c a
+
+instance HasProductCodec ObjectCodec where
+  product = ProductObjectCodec defaultDiagramOrder

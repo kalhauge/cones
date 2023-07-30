@@ -1,10 +1,12 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Main where
 
 import Data.Cone.TH
-import Language.Haskell.TH
 
 data Contact
   = NoContact
@@ -20,9 +22,11 @@ data User = User
   , contact :: Contact
   }
 
-$(makeDiagram ''Maybe)
-$(makeDiagram ''CornerCase)
-$(makeDiagram ''Contact)
+-- $(makeDiagram ''Maybe)
+
+-- $(makeDiagram ''CornerCase)
+
+-- $(makeDiagram ''Contact)
 $(makeDiagram ''User)
 
 main :: IO ()

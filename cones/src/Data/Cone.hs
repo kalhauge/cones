@@ -3,8 +3,11 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 {- |
 Module: Data.Cone
@@ -29,6 +32,15 @@ module Data.Cone (
   IsColimit (..),
   coeject,
   colimitIdentity,
+
+  -- * Ordering
+  -- $ordering
+  DiagramOrder,
+  defaultDiagramOrder,
+  diagramFold,
+  appOfLimit,
+  foldOfLimit,
+  altOfColimit,
 ) where
 
 -- base
@@ -36,7 +48,9 @@ module Data.Cone (
 import Barbies
 import Control.Applicative
 import Data.Functor.Contravariant
+import Data.Functor.Identity
 import Data.Kind
+import Data.Monoid
 import GHC.Generics (Generic)
 
 {- $diagrams
@@ -131,9 +145,17 @@ class ApplicativeB (Diagram a) => IsLimit a where
   -- | Given any other code, we can find a unique morphism from the top of the cone @b@ to our limit.
   factor :: Cone a b -> b -> a
 
+  -- | Uniquely for the cone, the diagram on the Identity functor is also an apex of a cone.
+  identityCone :: Cone a (Diagram a Identity)
+
 instance IsLimit (a, b) where
   cone = D2{getFstOf2 = fst, getSndOf2 = snd}
   factor D2{..} b = (getFstOf2 b, getSndOf2 b)
+  identityCone =
+    D2
+      { getFstOf2 = runIdentity . getFstOf2
+      , getSndOf2 = runIdentity . getSndOf2
+      }
 
 {- | Use the limit ability to extract an application of the
     contravariant functor @g@ on the limit for each element in the diagram.
@@ -207,3 +229,38 @@ coeject
   => Diagram a g
   -> Diagram a (Const (g a))
 coeject = bzipWith (\(Op fn) cd -> Const $ fn <$> cd) cocone
+
+{- $ordering
+
+The ordering of effects over diagrams.
+-}
+
+-- | Ordering of a diagram
+type DiagramOrder a =
+  forall m f g
+   . Applicative m
+  => (forall t. f t -> m (g t))
+  -> Diagram a f
+  -> m (Diagram a g)
+
+defaultDiagramOrder :: TraversableB (Diagram a) => DiagramOrder a
+defaultDiagramOrder = btraverse
+
+-- | A fold over a diagram.
+diagramFold :: Monoid m => DiagramOrder a -> (forall t. f t -> m) -> Diagram a f -> m
+diagramFold order fn = getConst . order (Const . fn)
+
+altOfColimit :: forall a f. (IsColimit a, Alternative f) => DiagramOrder a -> Diagram a f -> f a
+altOfColimit order diag =
+  let pre :: Diagram a (Const (f a)) = coeject diag
+   in getAlt . diagramFold order (\(Const a) -> Alt a) $ pre
+
+-- | Compute the applicative fold over the
+appOfLimit :: forall a f. (IsLimit a, Applicative f) => DiagramOrder a -> Diagram a f -> f a
+appOfLimit order diag =
+  factor identityCone <$> order (Identity <$>) diag
+
+foldOfLimit :: forall a m f. (IsLimit a, Monoid m) => DiagramOrder a -> (forall t. f t -> t -> m) -> Diagram a f -> a -> m
+foldOfLimit order f diag a =
+  let pre :: Diagram a (Const (Op m a)) = eject . bmap (Op . f) $ diag
+   in diagramFold order (\(Const (Op f')) -> f' a) pre

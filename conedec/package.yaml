@@ -30,9 +30,9 @@ dependencies:
 library:
   source-dirs: src
 
-# tests:
-#   cones-test:
-#     source-dirs: test
-#     main: Main.hs
-#     dependencies: 
-#       - conedec
+tests:
+  conedec-test:
+    source-dirs: test
+    main: Main.hs
+    dependencies: 
+      - conedec
