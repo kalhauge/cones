@@ -25,6 +25,7 @@ module Data.Cone (
   IsLimit (..),
   eject,
   limitIdentity,
+  identityCone,
 
   -- * Cocones and Colimits
   -- $cocones
@@ -41,17 +42,20 @@ module Data.Cone (
   appOfLimit,
   foldOfLimit,
   altOfColimit,
+  foldOfColimit,
 ) where
 
 -- base
-
-import Barbies
 import Control.Applicative
 import Data.Functor.Contravariant
 import Data.Functor.Identity
 import Data.Kind
 import Data.Monoid
+import Data.Void
 import GHC.Generics (Generic)
+
+-- barbies
+import Barbies hiding (Void)
 
 {- $diagrams
 The intuition behind a diagram, *in this setting*, is that
@@ -146,16 +150,31 @@ class ApplicativeB (Diagram a) => IsLimit a where
   factor :: Cone a b -> b -> a
 
   -- | Uniquely for the cone, the diagram on the Identity functor is also an apex of a cone.
-  identityCone :: Cone a (Diagram a Identity)
+  coneCone :: Cone a (Cone a ())
 
 instance IsLimit (a, b) where
   cone = D2{getFstOf2 = fst, getSndOf2 = snd}
   factor D2{..} b = (getFstOf2 b, getSndOf2 b)
-  identityCone =
+  coneCone =
     D2
-      { getFstOf2 = runIdentity . getFstOf2
-      , getSndOf2 = runIdentity . getSndOf2
+      { getFstOf2 = (`getFstOf2` ())
+      , getSndOf2 = (`getSndOf2` ())
       }
+
+-- coneCone :: IsLimit a => Cone a (Cone a ())
+-- coneCone = cone
+
+identityCone :: forall a. IsLimit a => Cone a (Diagram a Identity)
+identityCone = bmap (. identityDiagramToCone) coneCone
+
+identityDiagramToCone :: IsLimit a => Diagram a Identity -> Cone a ()
+identityDiagramToCone = bmap (const . runIdentity)
+
+unitConeToDiagram :: IsLimit a => Cone a () -> Diagram a Identity
+unitConeToDiagram = bmap (\a -> Identity $ a ())
+
+voidCone :: IsLimit a => Cone a Void
+voidCone = bmap (const absurd) cone
 
 {- | Use the limit ability to extract an application of the
     contravariant functor @g@ on the limit for each element in the diagram.
@@ -230,6 +249,9 @@ coeject
   -> Diagram a (Const (g a))
 coeject = bzipWith (\(Op fn) cd -> Const $ fn <$> cd) cocone
 
+unitCocone :: IsColimit a => Cocone a ()
+unitCocone = bmap (const . Op $ const ()) cocone
+
 {- $ordering
 
 The ordering of effects over diagrams.
@@ -251,9 +273,18 @@ diagramFold :: Monoid m => DiagramOrder a -> (forall t. f t -> m) -> Diagram a f
 diagramFold order fn = getConst . order (Const . fn)
 
 altOfColimit :: forall a f. (IsColimit a, Alternative f) => DiagramOrder a -> Diagram a f -> f a
-altOfColimit order diag =
-  let pre :: Diagram a (Const (f a)) = coeject diag
-   in getAlt . diagramFold order (\(Const a) -> Alt a) $ pre
+altOfColimit order =
+  getAlt . foldOfColimit order Alt
+
+foldOfColimit
+  :: forall a m f
+   . (IsColimit a, Monoid m, Functor f)
+  => DiagramOrder a
+  -> (f a -> m)
+  -> Diagram a f
+  -> m
+foldOfColimit order f diag =
+  diagramFold order (\(Const a) -> f a) $ coeject diag
 
 -- | Compute the applicative fold over the
 appOfLimit :: forall a f. (IsLimit a, Applicative f) => DiagramOrder a -> Diagram a f -> f a

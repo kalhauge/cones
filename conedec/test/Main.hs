@@ -1,5 +1,9 @@
 {-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -7,13 +11,14 @@ import Data.Cone
 import Data.Cone.TH
 
 import Conedec
+import Data.Scientific (Scientific)
 import qualified Data.Text as Text
 import Prelude hiding (product)
 
 data Contact
   = NoContact
-  | Email String
-  | Phone Int String
+  | Email Text.Text
+  | Phone Scientific Text.Text
 
 data User = User
   { name :: Text.Text
@@ -24,12 +29,28 @@ data User = User
 $(makeDiagram ''Contact)
 $(makeDiagram ''User)
 
+codecUser :: Codec User
 codecUser =
   object $
-    product $
-      def
-        { getName = text
+    allOf $
+      UserD
+        { getName = "name" .: text
+        , getContact =
+            anyOf $
+              ContactD
+                { ifNoContact = EmptyObjectCodec
+                , ifEmail = "email" .: text
+                , ifPhone =
+                    "phone"
+                      .: ( array
+                            . allOf
+                            $ D2
+                              { getFstOf2 = scientific
+                              , getSndOf2 = text
+                              }
+                         )
+                }
         }
 
 main :: IO ()
-main = putStrLn "Hello"
+main = debugCodec codecUser

@@ -22,7 +22,6 @@ import Control.Monad
 import Data.Char
 import Data.Cone
 import Data.Functor.Contravariant
-import Data.Functor.Identity
 import GHC.Generics
 import Language.Haskell.TH
 
@@ -83,11 +82,11 @@ makeDiagram name = do
                       []
                 , do
                     valD
-                      (varP 'identityCone)
+                      (varP 'coneCone)
                       ( normalB
                           ( recConE
                               diagramName
-                              [ fieldExp n [e|runIdentity . $(varE n)|]
+                              [ fieldExp n [e|\a -> $(varE n) a ()|]
                               | (n, _, _) <- diagramFields
                               ]
                           )

@@ -26,6 +26,7 @@ dependencies:
   - vector
   - text
   - barbies
+  - prettyprinter
 
 library:
   source-dirs: src

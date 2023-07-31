@@ -3,9 +3,12 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 {- |
 
@@ -18,9 +21,7 @@ module Conedec where
 -- base
 import Control.Applicative
 import Data.Bifunctor
-import Data.Functor.Compose
 import Data.Functor.Contravariant
-import Data.Monoid
 
 -- aeson
 import Data.Aeson as Aeson
@@ -38,13 +39,19 @@ import qualified Data.Text as Text
 
 -- cones
 import Data.Cone
-import Data.Functor.Identity
+
+-- prettyprinter
+
+import qualified Data.Aeson.Key as Aeson
+import Data.Scientific
+import qualified Prettyprinter as PP
+import qualified Prettyprinter.Render.Text as PP
 
 -- | The codec, used to implement `toJSON`, `fromJSON`, and `toEncoding`
 data Codec t where
   -- | A codec that consumes everything and produces nothing.
   -- Should not be used in production
-  EmptyCodec
+  BrokenCodec
     :: Codec t
   -- | A codec that only parses and produces @null@.
   NullCodec
@@ -65,9 +72,8 @@ data Codec t where
   ManyOfCodec
     :: Codec a
     -> Codec (V.Vector a)
-  --   ScientificCodec
-  --     :: Codec Scientific
-
+  NumberCodec
+    :: Codec Scientific
   -- | A codec that parses a product of types, as an fixed length array.
   ArrayCodec
     :: ArrayCodec a
@@ -78,7 +84,7 @@ data Codec t where
     -> Codec a
 
 data ArrayCodec a where
-  ProductArrayCodec
+  AllOfArrayCodec
     :: (IsLimit a)
     => DiagramOrder a
     -> Diagram a ArrayCodec
@@ -93,7 +99,7 @@ data ArrayCodec a where
     -> ArrayCodec a
 
 data ObjectCodec a where
-  ProductObjectCodec
+  AllOfObjectCodec
     :: (IsLimit a)
     => DiagramOrder a
     -> Diagram a ObjectCodec
@@ -107,6 +113,8 @@ data ObjectCodec a where
     :: Key
     -> Codec a
     -> ObjectCodec a
+  EmptyObjectCodec
+    :: ObjectCodec a
 
 toJSONViaCodec :: Codec t -> t -> Value
 toJSONViaCodec = \case
@@ -118,7 +126,9 @@ toJSONViaCodec = \case
     Array . toJSONArrayViaCodec a
   ObjectCodec oc ->
     Aeson.object . toJSONObjectViaCodec oc
-  EmptyCodec -> \_ -> error "empty codec"
+  NumberCodec ->
+    Aeson.Number
+  BrokenCodec -> \_ -> error "empty codec"
   NullCodec -> \case
     () -> Null
   StringCodec ->
@@ -128,7 +138,7 @@ toJSONViaCodec = \case
 
 toJSONArrayViaCodec :: ArrayCodec t -> t -> Array
 toJSONArrayViaCodec = \case
-  ProductArrayCodec order diag ->
+  AllOfArrayCodec order diag ->
     foldOfLimit order toJSONArrayViaCodec diag
   AnyOfArrayCodec _ diag ->
     cofactor . bmap (Op . toJSONArrayViaCodec) $ diag
@@ -137,12 +147,14 @@ toJSONArrayViaCodec = \case
 
 toJSONObjectViaCodec :: ObjectCodec t -> t -> [Pair]
 toJSONObjectViaCodec = \case
-  ProductObjectCodec order diag ->
+  AllOfObjectCodec order diag ->
     foldOfLimit order toJSONObjectViaCodec diag
   AnyOfObjectCodec _ diag ->
     cofactor . bmap (Op . toJSONObjectViaCodec) $ diag
   FieldCodec name cd -> \t ->
     pure (name, toJSONViaCodec cd t)
+  EmptyObjectCodec ->
+    const []
 
 parseJSONViaCodec :: forall t. Codec t -> Value -> Parser t
 parseJSONViaCodec = \case
@@ -155,10 +167,14 @@ parseJSONViaCodec = \case
     runArrayParser "no-name" (parseJSONArrayViaCodec ad)
   ObjectCodec ad ->
     runObjectParser "no-name" (parseJSONObjectViaCodec ad)
-  EmptyCodec -> \_ -> error "empty codec"
+  BrokenCodec -> \_ ->
+    error "empty codec"
   NullCodec -> \case
     Null -> pure ()
     a -> typeMismatch "null" a
+  NumberCodec -> \case
+    Number s -> pure s
+    a -> typeMismatch "number" a
   StringCodec -> \case
     String txt -> pure txt
     v -> typeMismatch "String" v
@@ -183,7 +199,7 @@ mkObjectParser fn key = ObjectParser \obj ->
 
 parseJSONArrayViaCodec :: ArrayCodec t -> ArrayParser t
 parseJSONArrayViaCodec = \case
-  ProductArrayCodec order diag ->
+  AllOfArrayCodec order diag ->
     appOfLimit order . bmap parseJSONArrayViaCodec $ diag
   AnyOfArrayCodec order diag ->
     altOfColimit order . bmap parseJSONArrayViaCodec $ diag
@@ -214,22 +230,127 @@ instance Alternative ArrayParser where
   ArrayParser f <|> ArrayParser g = ArrayParser \a n ->
     f a n <|> g a n
 
+{- $prettyprinter
+Here:
+-}
+
+prettyCodec :: Codec a -> PP.Doc ann
+prettyCodec = \case
+  ObjectCodec o ->
+    "object" PP.<+> prettyObjectCodec o
+  ArrayCodec a ->
+    "array" PP.<+> prettyArrayCodec a
+  AnyOfCodec order diag ->
+    prettyAnyOf prettyCodec order diag
+  ManyOfCodec a ->
+    "manyOf" PP.<+> prettyCodec a
+  BrokenCodec ->
+    ">broken<"
+  StringCodec ->
+    "<string>"
+  NumberCodec ->
+    "<number>"
+  NullCodec ->
+    "null"
+  BoolCodec ->
+    "<bool>"
+ where
+  prettyObjectCodec :: ObjectCodec b -> PP.Doc ann
+  prettyObjectCodec = \case
+    AllOfObjectCodec order diag ->
+      prettyAllOf prettyObjectCodec order diag
+    AnyOfObjectCodec order diag ->
+      prettyAnyOf prettyObjectCodec order diag
+    EmptyObjectCodec ->
+      "<empty>"
+    FieldCodec k v ->
+      PP.hsep
+        [PP.pretty (Aeson.toString k), ":", PP.nest 2 (prettyCodec v)]
+
+  prettyArrayCodec :: ArrayCodec b -> PP.Doc ann
+  prettyArrayCodec = \case
+    AllOfArrayCodec order diag ->
+      prettyAllOf prettyArrayCodec order diag
+    AnyOfArrayCodec order diag ->
+      prettyAnyOf prettyArrayCodec order diag
+    ElementCodec v ->
+      prettyCodec v
+
+prettyAnyOf :: (forall b. f b -> PP.Doc ann) -> DiagramOrder a -> Diagram a f -> PP.Doc ann
+prettyAnyOf fn order diag =
+  "anyOf"
+    PP.<+> PP.nest
+      2
+      (PP.line <> PP.vcat (diagramFold order (\a -> ["+ " <> fn a]) diag))
+
+prettyAllOf :: (forall b. f b -> PP.Doc ann) -> DiagramOrder a -> Diagram a f -> PP.Doc ann
+prettyAllOf fn order diag =
+  "allOf"
+    PP.<+> PP.nest
+      2
+      (PP.line <> PP.vcat (diagramFold order (\a -> ["* " <> fn a]) diag))
+
+debugCodec :: Codec a -> IO ()
+debugCodec c = do
+  putStrLn "------"
+  PP.putDoc $ prettyCodec c
+  putStrLn ""
+  putStrLn "------"
+
 {- $builders
 These are the buidlers:
 -}
 
+broken :: Codec t
+broken = BrokenCodec
+
+null :: Codec ()
+null = NullCodec
+
 object :: ObjectCodec t -> Codec t
 object = ObjectCodec
+
+array :: ArrayCodec t -> Codec t
+array = ArrayCodec
 
 class HasPrimitives c where
   text :: c Text.Text
   bool :: c Bool
+  scientific :: c Scientific
+
+instance HasPrimitives Codec where
+  text = StringCodec
+  bool = BoolCodec
+  scientific = NumberCodec
+
+instance HasPrimitives ArrayCodec where
+  text = ElementCodec StringCodec
+  bool = ElementCodec BoolCodec
+  scientific = ElementCodec NumberCodec
+
+(.:) :: Key -> Codec c -> ObjectCodec c
+(.:) = FieldCodec
 
 class HasEmptyDiagram c where
-  def :: Diagram a c
+  def :: ApplicativeB (Diagram a) => Diagram a c
 
-class HasProductCodec c where
-  product :: (IsLimit a, TraversableB (Diagram a)) => Diagram a c -> c a
+instance HasEmptyDiagram ObjectCodec where
+  def = bpure EmptyObjectCodec
 
-instance HasProductCodec ObjectCodec where
-  product = ProductObjectCodec defaultDiagramOrder
+class HasAllOfCodec c where
+  allOf :: (IsLimit a, TraversableB (Diagram a)) => Diagram a c -> c a
+
+class HasAnyOfCodec c where
+  anyOf :: (IsColimit a, TraversableB (Diagram a)) => Diagram a c -> c a
+
+instance HasAllOfCodec ObjectCodec where
+  allOf = AllOfObjectCodec defaultDiagramOrder
+
+instance HasAnyOfCodec ObjectCodec where
+  anyOf = AnyOfObjectCodec defaultDiagramOrder
+
+instance HasAllOfCodec ArrayCodec where
+  allOf = AllOfArrayCodec defaultDiagramOrder
+
+instance HasAnyOfCodec ArrayCodec where
+  anyOf = AnyOfArrayCodec defaultDiagramOrder
