@@ -37,3 +37,4 @@ tests:
     main: Main.hs
     dependencies: 
       - conedec
+      - bytestring

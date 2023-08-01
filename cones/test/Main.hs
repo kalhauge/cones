@@ -23,10 +23,8 @@ data User = User
   }
 
 -- $(makeDiagram ''Maybe)
-
--- $(makeDiagram ''CornerCase)
-
--- $(makeDiagram ''Contact)
+$(makeDiagram ''CornerCase)
+$(makeDiagram ''Contact)
 $(makeDiagram ''User)
 
 main :: IO ()

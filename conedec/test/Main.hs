@@ -15,6 +15,12 @@ import Data.Scientific (Scientific)
 import qualified Data.Text as Text
 import Prelude hiding (product)
 
+-- aeson
+import Data.Aeson (encode)
+
+-- bytestring
+import qualified Data.ByteString.Lazy.Char8 as BS
+
 data Contact
   = NoContact
   | Email Text.Text
@@ -22,8 +28,8 @@ data Contact
 
 data User = User
   { name :: Text.Text
-  , -- , age :: Int
-    contact :: Contact
+  , age :: Int
+  , contact :: Contact
   }
 
 $(makeDiagram ''Contact)
@@ -34,11 +40,16 @@ codecUser =
   object $
     allOf $
       UserD
-        { getName = "name" .: text
+        { getName =
+            "name"
+              .: (text <?> "Given and last name")
+              <?> "The name of the user"
+        , getAge =
+            "age" .: boundIntegral
         , getContact =
             anyOf $
               ContactD
-                { ifNoContact = EmptyObjectCodec
+                { ifNoContact = EmptyObjectCodec <?> "Leave empty for no contact"
                 , ifEmail = "email" .: text
                 , ifPhone =
                     "phone"
@@ -53,4 +64,6 @@ codecUser =
         }
 
 main :: IO ()
-main = debugCodec codecUser
+main = do
+  debugCodec codecUser
+  BS.putStrLn $ encode (toJSONViaCodec codecUser $ User "Peter" 20 (Phone 21 "23244123"))

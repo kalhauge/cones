@@ -15,6 +15,14 @@
 Stability: experimental
 
 A cone based Codec implementation.
+
+Remaining things:
+
+- [ ] Enabling bimaps
+- [ ] Constraints
+- [ ] Adding documentation
+- [ ] Adding annotations
+- [ ] Adding references and declarations
 -}
 module Conedec where
 
@@ -82,6 +90,10 @@ data Codec t where
   ObjectCodec
     :: ObjectCodec a
     -> Codec a
+  DocCodec
+    :: Text.Text
+    -> Codec a
+    -> Codec a
 
 data ArrayCodec a where
   AllOfArrayCodec
@@ -93,6 +105,10 @@ data ArrayCodec a where
     :: (IsColimit a)
     => DiagramOrder a
     -> Diagram a ArrayCodec
+    -> ArrayCodec a
+  DocArrayCodec
+    :: Text.Text
+    -> ArrayCodec a
     -> ArrayCodec a
   ElementCodec
     :: Codec a
@@ -115,6 +131,10 @@ data ObjectCodec a where
     -> ObjectCodec a
   EmptyObjectCodec
     :: ObjectCodec a
+  DocObjectCodec
+    :: Text.Text
+    -> ObjectCodec a
+    -> ObjectCodec a
 
 toJSONViaCodec :: Codec t -> t -> Value
 toJSONViaCodec = \case
@@ -128,13 +148,16 @@ toJSONViaCodec = \case
     Aeson.object . toJSONObjectViaCodec oc
   NumberCodec ->
     Aeson.Number
-  BrokenCodec -> \_ -> error "empty codec"
+  BrokenCodec -> \_ ->
+    error "empty codec"
   NullCodec -> \case
     () -> Null
   StringCodec ->
     String
   BoolCodec ->
     Bool
+  DocCodec _ c ->
+    toJSONViaCodec c
 
 toJSONArrayViaCodec :: ArrayCodec t -> t -> Array
 toJSONArrayViaCodec = \case
@@ -142,6 +165,8 @@ toJSONArrayViaCodec = \case
     foldOfLimit order toJSONArrayViaCodec diag
   AnyOfArrayCodec _ diag ->
     cofactor . bmap (Op . toJSONArrayViaCodec) $ diag
+  DocArrayCodec _ c ->
+    toJSONArrayViaCodec c
   ElementCodec cd ->
     V.singleton . toJSONViaCodec cd
 
@@ -153,6 +178,8 @@ toJSONObjectViaCodec = \case
     cofactor . bmap (Op . toJSONObjectViaCodec) $ diag
   FieldCodec name cd -> \t ->
     pure (name, toJSONViaCodec cd t)
+  DocObjectCodec _ cd ->
+    toJSONObjectViaCodec cd
   EmptyObjectCodec ->
     const []
 
@@ -181,6 +208,8 @@ parseJSONViaCodec = \case
   BoolCodec -> \case
     Bool b -> pure b
     v -> typeMismatch "Bool" v
+  DocCodec _ c ->
+    parseJSONViaCodec c
 
 parseJSONObjectViaCodec :: ObjectCodec t -> ObjectParser t
 parseJSONObjectViaCodec = undefined
@@ -203,6 +232,8 @@ parseJSONArrayViaCodec = \case
     appOfLimit order . bmap parseJSONArrayViaCodec $ diag
   AnyOfArrayCodec order diag ->
     altOfColimit order . bmap parseJSONArrayViaCodec $ diag
+  DocArrayCodec _ c ->
+    parseJSONArrayViaCodec c
   ElementCodec cd ->
     mkArrayParser (parseJSONViaCodec cd)
 
@@ -254,6 +285,8 @@ prettyCodec = \case
     "null"
   BoolCodec ->
     "<bool>"
+  DocCodec s c ->
+    prettyCodec c <> PP.line <> PP.nest 2 ("-- " <> PP.pretty s)
  where
   prettyObjectCodec :: ObjectCodec b -> PP.Doc ann
   prettyObjectCodec = \case
@@ -261,6 +294,8 @@ prettyCodec = \case
       prettyAllOf prettyObjectCodec order diag
     AnyOfObjectCodec order diag ->
       prettyAnyOf prettyObjectCodec order diag
+    DocObjectCodec s c ->
+      prettyObjectCodec c <> PP.line <> PP.nest 2 ("-- " <> PP.pretty s)
     EmptyObjectCodec ->
       "<empty>"
     FieldCodec k v ->
@@ -273,6 +308,8 @@ prettyCodec = \case
       prettyAllOf prettyArrayCodec order diag
     AnyOfArrayCodec order diag ->
       prettyAnyOf prettyArrayCodec order diag
+    DocArrayCodec s c ->
+      prettyArrayCodec c <> PP.line <> PP.nest 2 ("-- " <> PP.pretty s)
     ElementCodec v ->
       prettyCodec v
 
@@ -313,6 +350,20 @@ object = ObjectCodec
 array :: ArrayCodec t -> Codec t
 array = ArrayCodec
 
+infix 6 <?>
+
+class HasDoc c where
+  (<?>) :: c a -> Text.Text -> c a
+
+instance HasDoc Codec where
+  (<?>) = flip DocCodec
+
+instance HasDoc ArrayCodec where
+  (<?>) = flip DocArrayCodec
+
+instance HasDoc ObjectCodec where
+  (<?>) = flip DocObjectCodec
+
 class HasPrimitives c where
   text :: c Text.Text
   bool :: c Bool
@@ -327,6 +378,8 @@ instance HasPrimitives ArrayCodec where
   text = ElementCodec StringCodec
   bool = ElementCodec BoolCodec
   scientific = ElementCodec NumberCodec
+
+infix 7 .:
 
 (.:) :: Key -> Codec c -> ObjectCodec c
 (.:) = FieldCodec

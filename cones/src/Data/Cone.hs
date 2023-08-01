@@ -6,6 +6,7 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
@@ -127,6 +128,23 @@ data instance Diagram (a, b, c, d) f = D4
   deriving stock (Show, Eq, Generic)
   deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
+{- | An index is a single element in the diagram, this is esentially the choosing one of
+ the elements in the diagram.
+-}
+data family Index a :: (Type -> Type) -> Type
+
+data instance Index (Either a b) f
+  = EitherLeftI (f a)
+  | EitherRightI (f b)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (FunctorB, TraversableB)
+
+data instance Index (a, b) f
+  = I2Fst (f a)
+  | I2Snd (f b)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (FunctorB, TraversableB)
+
 {- $cones
 
 Cones and limits
@@ -134,6 +152,15 @@ Cones and limits
 
 -- | A @Cone@ is a digram over the functor (->) b
 type Cone a b = Diagram a ((->) b)
+
+type Coscoop a b = Index a (Op b)
+
+test :: t ~ (a, b) => Diagram t (Const (t -> Coscoop t t))
+test =
+  D2
+    { getFstOf2 = Const (\t -> I2Fst $ Op (,snd t))
+    , getSndOf2 = Const (\t -> I2Snd $ Op (fst t,))
+    }
 
 {- |
 
@@ -149,6 +176,8 @@ class ApplicativeB (Diagram a) => IsLimit a where
   -- | Given any other code, we can find a unique morphism from the top of the cone @b@ to our limit.
   factor :: Cone a b -> b -> a
 
+  coscoop :: Coscoop a b -> a -> b
+
   -- | Uniquely for the cone, the diagram on the Identity functor is also an apex of a cone.
   coneCone :: Cone a (Cone a ())
 
@@ -160,6 +189,10 @@ instance IsLimit (a, b) where
       { getFstOf2 = (`getFstOf2` ())
       , getSndOf2 = (`getSndOf2` ())
       }
+
+  coscoop = \case
+    I2Fst (Op fa) -> fa . fst
+    I2Snd (Op fa) -> fa . snd
 
 -- coneCone :: IsLimit a => Cone a (Cone a ())
 -- coneCone = cone
@@ -206,6 +239,8 @@ Cocones and colimits.
 -- | A @Cocone@ is a digram over the covariate functor (<-) a
 type Cocone a b = Diagram a (Op b)
 
+type Scoop a b = Index a ((->) b)
+
 {- |
 
 Laws:
@@ -220,6 +255,8 @@ class ApplicativeB (Diagram a) => IsColimit a where
 
   -- | Given any other cone, we can find a unique morphism from our limit to the from the top of the cone @b@.
   cofactor :: Cocone a b -> a -> b
+
+  scoop :: Scoop a b -> b -> a
 
 {- | Used to calculate the identity using a limit, only really usefull for
 testing that limits are created correctly.
@@ -239,6 +276,9 @@ instance IsColimit (Either a b) where
   cofactor EitherD{..} = \case
     Left a -> getOp ifLeft a
     Right a -> getOp ifRight a
+  scoop = \case
+    EitherLeftI fa -> Left . fa
+    EitherRightI fb -> Right . fb
 
 {- | Use the colimit ability to extract an application of the functor
  @g@ on the colimit for each element in the diagram.
