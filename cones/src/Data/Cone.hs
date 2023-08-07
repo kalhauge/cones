@@ -6,7 +6,6 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
@@ -40,7 +39,7 @@ module Data.Cone (
   DiagramOrder,
   defaultDiagramOrder,
   diagramFold,
-  appOfLimit,
+  apOfLimit,
   foldOfLimit,
   altOfColimit,
   foldOfColimit,
@@ -153,15 +152,6 @@ Cones and limits
 -- | A @Cone@ is a digram over the functor (->) b
 type Cone a b = Diagram a ((->) b)
 
-type Coscoop a b = Index a (Op b)
-
-test :: t ~ (a, b) => Diagram t (Const (t -> Coscoop t t))
-test =
-  D2
-    { getFstOf2 = Const (\t -> I2Fst $ Op (,snd t))
-    , getSndOf2 = Const (\t -> I2Snd $ Op (fst t,))
-    }
-
 {- |
 
 Laws:
@@ -176,8 +166,6 @@ class ApplicativeB (Diagram a) => IsLimit a where
   -- | Given any other code, we can find a unique morphism from the top of the cone @b@ to our limit.
   factor :: Cone a b -> b -> a
 
-  coscoop :: Coscoop a b -> a -> b
-
   -- | Uniquely for the cone, the diagram on the Identity functor is also an apex of a cone.
   coneCone :: Cone a (Cone a ())
 
@@ -189,10 +177,6 @@ instance IsLimit (a, b) where
       { getFstOf2 = (`getFstOf2` ())
       , getSndOf2 = (`getSndOf2` ())
       }
-
-  coscoop = \case
-    I2Fst (Op fa) -> fa . fst
-    I2Snd (Op fa) -> fa . snd
 
 -- coneCone :: IsLimit a => Cone a (Cone a ())
 -- coneCone = cone
@@ -239,8 +223,6 @@ Cocones and colimits.
 -- | A @Cocone@ is a digram over the covariate functor (<-) a
 type Cocone a b = Diagram a (Op b)
 
-type Scoop a b = Index a ((->) b)
-
 {- |
 
 Laws:
@@ -255,8 +237,6 @@ class ApplicativeB (Diagram a) => IsColimit a where
 
   -- | Given any other cone, we can find a unique morphism from our limit to the from the top of the cone @b@.
   cofactor :: Cocone a b -> a -> b
-
-  scoop :: Scoop a b -> b -> a
 
 {- | Used to calculate the identity using a limit, only really usefull for
 testing that limits are created correctly.
@@ -276,9 +256,6 @@ instance IsColimit (Either a b) where
   cofactor EitherD{..} = \case
     Left a -> getOp ifLeft a
     Right a -> getOp ifRight a
-  scoop = \case
-    EitherLeftI fa -> Left . fa
-    EitherRightI fb -> Right . fb
 
 {- | Use the colimit ability to extract an application of the functor
  @g@ on the colimit for each element in the diagram.
@@ -327,8 +304,8 @@ foldOfColimit order f diag =
   diagramFold order (\(Const a) -> f a) $ coeject diag
 
 -- | Compute the applicative fold over the
-appOfLimit :: forall a f. (IsLimit a, Applicative f) => DiagramOrder a -> Diagram a f -> f a
-appOfLimit order diag =
+apOfLimit :: forall a f. (IsLimit a, Applicative f) => DiagramOrder a -> Diagram a f -> f a
+apOfLimit order diag =
   factor identityCone <$> order (Identity <$>) diag
 
 foldOfLimit :: forall a m f. (IsLimit a, Monoid m) => DiagramOrder a -> (forall t. f t -> t -> m) -> Diagram a f -> a -> m

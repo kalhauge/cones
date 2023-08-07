@@ -27,6 +27,7 @@ dependencies:
   - text
   - barbies
   - prettyprinter
+  - mtl
 
 library:
   source-dirs: src

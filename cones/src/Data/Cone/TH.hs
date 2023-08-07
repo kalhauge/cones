@@ -74,8 +74,8 @@ makeDiagram name = do
                       ( normalB
                           ( recConE
                               diagramName
-                              [ fieldExp n (varE cn)
-                              | (n, cn, _) <- diagramFields
+                              [ fieldExp n (varE cn')
+                              | (n, cn', _) <- diagramFields
                               ]
                           )
                       )
@@ -163,7 +163,7 @@ makeDiagram name = do
                           ( normalB
                               ( caseE
                                   (varE a)
-                                  [ opConM cn t (\t -> [e|getOp ($(varE n) $(varE diag)) $t|])
+                                  [ opConM cn t (\t' -> [e|getOp ($(varE n) $(varE diag)) $t'|])
                                   | (n, cn, t) <- diagramConstructors
                                   ]
                               )

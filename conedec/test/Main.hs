@@ -11,7 +11,6 @@ import Data.Cone
 import Data.Cone.TH
 
 import Conedec
-import Data.Scientific (Scientific)
 import qualified Data.Text as Text
 import Prelude hiding (product)
 
@@ -19,18 +18,22 @@ import Prelude hiding (product)
 import Data.Aeson (encode)
 
 -- bytestring
+
+import Data.Aeson.Types (parse)
 import qualified Data.ByteString.Lazy.Char8 as BS
 
 data Contact
   = NoContact
   | Email Text.Text
-  | Phone Scientific Text.Text
+  | Phone Int Text.Text
+  deriving (Show)
 
 data User = User
   { name :: Text.Text
   , age :: Int
   , contact :: Contact
   }
+  deriving (Show)
 
 $(makeDiagram ''Contact)
 $(makeDiagram ''User)
@@ -56,7 +59,7 @@ codecUser =
                       .: ( array
                             . allOf
                             $ D2
-                              { getFstOf2 = scientific
+                              { getFstOf2 = boundIntegral
                               , getSndOf2 = text
                               }
                          )
@@ -66,4 +69,6 @@ codecUser =
 main :: IO ()
 main = do
   debugCodec codecUser
-  BS.putStrLn $ encode (toJSONViaCodec codecUser $ User "Peter" 20 (Phone 21 "23244123"))
+  value <- toJSONViaCodec codecUser $ User "Peter" 20 (Phone 21 "23244123")
+  BS.putStrLn $ encode value
+  print $ parse (parseJSONViaCodec codecUser) value
