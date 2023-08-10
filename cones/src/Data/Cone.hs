@@ -1,7 +1,9 @@
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -43,6 +45,11 @@ module Data.Cone (
   foldOfLimit,
   altOfColimit,
   foldOfColimit,
+
+  -- * Missing Barbie things
+  BLens (..),
+  LensB,
+  LensesB (..),
 ) where
 
 -- base
@@ -90,7 +97,7 @@ use cases.
 {- | Every ADT have a corresponding diagram, but for programming reasons, it is nice to have this defined as a unique datatype.
 *I'm terrible sorry that the data family rendering is not especially good.*
 -}
-data family Diagram a :: (Type -> Type) -> Type
+data family Diagram t :: (Type -> Type) -> Type
 
 -- | The diagram for the coproduct
 data instance Diagram (Either a b) f = EitherD
@@ -127,30 +134,13 @@ data instance Diagram (a, b, c, d) f = D4
   deriving stock (Show, Eq, Generic)
   deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
-{- | An index is a single element in the diagram, this is esentially the choosing one of
- the elements in the diagram.
--}
-data family Index a :: (Type -> Type) -> Type
-
-data instance Index (Either a b) f
-  = EitherLeftI (f a)
-  | EitherRightI (f b)
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass (FunctorB, TraversableB)
-
-data instance Index (a, b) f
-  = I2Fst (f a)
-  | I2Snd (f b)
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass (FunctorB, TraversableB)
-
 {- $cones
 
 Cones and limits
 -}
 
 -- | A @Cone@ is a digram over the functor (->) b
-type Cone a b = Diagram a ((->) b)
+type Cone t b = Diagram t ((->) b)
 
 {- |
 
@@ -159,15 +149,15 @@ Laws:
 factor cone = id
 @
 -}
-class ApplicativeB (Diagram a) => IsLimit a where
+class ApplicativeB (Diagram t) => IsLimit t where
   -- | @a@ has a cone.
-  cone :: Cone a a
+  cone :: Cone t t
 
   -- | Given any other code, we can find a unique morphism from the top of the cone @b@ to our limit.
-  factor :: Cone a b -> b -> a
+  factor :: Cone t b -> b -> t
 
-  -- | Uniquely for the cone, the diagram on the Identity functor is also an apex of a cone.
-  coneCone :: Cone a (Cone a ())
+  -- | Uniquely for the cone, the diagram on the Identity functor is also an apex of t cone.
+  coneCone :: Cone t (Cone t ())
 
 instance IsLimit (a, b) where
   cone = D2{getFstOf2 = fst, getSndOf2 = snd}
@@ -181,25 +171,25 @@ instance IsLimit (a, b) where
 -- coneCone :: IsLimit a => Cone a (Cone a ())
 -- coneCone = cone
 
-identityCone :: forall a. IsLimit a => Cone a (Diagram a Identity)
+identityCone :: forall t. IsLimit t => Cone t (Diagram t Identity)
 identityCone = bmap (. identityDiagramToCone) coneCone
 
-identityDiagramToCone :: IsLimit a => Diagram a Identity -> Cone a ()
+identityDiagramToCone :: IsLimit t => Diagram t Identity -> Cone t ()
 identityDiagramToCone = bmap (const . runIdentity)
 
-unitConeToDiagram :: IsLimit a => Cone a () -> Diagram a Identity
+unitConeToDiagram :: IsLimit t => Cone t () -> Diagram t Identity
 unitConeToDiagram = bmap (\a -> Identity $ a ())
 
-voidCone :: IsLimit a => Cone a Void
+voidCone :: IsLimit t => Cone t Void
 voidCone = bmap (const absurd) cone
 
 {- | Use the limit ability to extract an application of the
     contravariant functor @g@ on the limit for each element in the diagram.
 -}
 eject
-  :: (IsLimit a, Contravariant g)
-  => Diagram a g
-  -> Diagram a (Const (g a))
+  :: (IsLimit t, Contravariant g)
+  => Diagram t g
+  -> Diagram t (Const (g t))
 eject = bzipWith (\fn cd -> Const $ fn >$< cd) cone
 
 {- | Used to calculate the identity using a limit, only really usefull for
@@ -212,7 +202,7 @@ prop_isLimit :: (Int, Bool) -> Property
 prop_isLimit a = a === limitIdentity a
 @
 -}
-limitIdentity :: IsLimit a => a -> a
+limitIdentity :: IsLimit t => t -> t
 limitIdentity = factor cone
 
 {- $cocones
@@ -221,7 +211,7 @@ Cocones and colimits.
 -}
 
 -- | A @Cocone@ is a digram over the covariate functor (<-) a
-type Cocone a b = Diagram a (Op b)
+type Cocone t b = Diagram t (Op b)
 
 {- |
 
@@ -231,12 +221,12 @@ Laws:
 cofactor cocone = id
 @
 -}
-class ApplicativeB (Diagram a) => IsColimit a where
+class ApplicativeB (Diagram t) => IsColimit t where
   -- | @a@ has a cocone.
-  cocone :: Cocone a a
+  cocone :: Cocone t t
 
   -- | Given any other cone, we can find a unique morphism from our limit to the from the top of the cone @b@.
-  cofactor :: Cocone a b -> a -> b
+  cofactor :: Cocone t b -> t -> b
 
 {- | Used to calculate the identity using a limit, only really usefull for
 testing that limits are created correctly.
@@ -248,7 +238,7 @@ prop_isColimit :: Eihter Int Bool -> Property
 prop_isColimit a = a === colimitIdentity a
 @
 -}
-colimitIdentity :: IsColimit a => a -> a
+colimitIdentity :: IsColimit t => t -> t
 colimitIdentity = cofactor cocone
 
 instance IsColimit (Either a b) where
@@ -261,12 +251,12 @@ instance IsColimit (Either a b) where
  @g@ on the colimit for each element in the diagram.
 -}
 coeject
-  :: (IsColimit a, Functor g)
-  => Diagram a g
-  -> Diagram a (Const (g a))
+  :: (IsColimit t, Functor g)
+  => Diagram t g
+  -> Diagram t (Const (g t))
 coeject = bzipWith (\(Op fn) cd -> Const $ fn <$> cd) cocone
 
-unitCocone :: IsColimit a => Cocone a ()
+unitCocone :: IsColimit t => Cocone t ()
 unitCocone = bmap (const . Op $ const ()) cocone
 
 {- $ordering
@@ -274,41 +264,62 @@ unitCocone = bmap (const . Op $ const ()) cocone
 The ordering of effects over diagrams.
 -}
 
+-- | Diagram Lenses
+newtype BLens m b f a = BLens
+  { getBLens
+      :: (f a -> m (f a))
+      -> (b f -> m (b f))
+  }
+
+type LensB b f a = forall m. Functor m => (f a -> m (f a)) -> (b f -> m (b f))
+
+class LensesB b where
+  blenses :: Functor m => b (BLens m b f)
+
+instance LensesB (Diagram (a, b)) where
+  blenses =
+    D2
+      { getFstOf2 = BLens \fn b ->
+          (\x -> b{getFstOf2 = x}) <$> fn (getFstOf2 b)
+      , getSndOf2 = BLens \fn b ->
+          (\x -> b{getSndOf2 = x}) <$> fn (getSndOf2 b)
+      }
+
 -- | Ordering of a diagram
-type DiagramOrder a =
+type DiagramOrder t =
   forall m f g
    . Applicative m
-  => (forall t. f t -> m (g t))
-  -> Diagram a f
-  -> m (Diagram a g)
+  => (forall a. f a -> m (g a))
+  -> Diagram t f
+  -> m (Diagram t g)
 
-defaultDiagramOrder :: TraversableB (Diagram a) => DiagramOrder a
+defaultDiagramOrder :: TraversableB (Diagram t) => DiagramOrder t
 defaultDiagramOrder = btraverse
 
 -- | A fold over a diagram.
-diagramFold :: Monoid m => DiagramOrder a -> (forall t. f t -> m) -> Diagram a f -> m
+diagramFold :: Monoid m => DiagramOrder t -> (forall a. f a -> m) -> Diagram t f -> m
 diagramFold order fn = getConst . order (Const . fn)
 
-altOfColimit :: forall a f. (IsColimit a, Alternative f) => DiagramOrder a -> Diagram a f -> f a
+altOfColimit :: forall t f. (IsColimit t, Alternative f) => DiagramOrder t -> Diagram t f -> f t
 altOfColimit order =
   getAlt . foldOfColimit order Alt
 
 foldOfColimit
-  :: forall a m f
-   . (IsColimit a, Monoid m, Functor f)
-  => DiagramOrder a
-  -> (f a -> m)
-  -> Diagram a f
+  :: forall t m f
+   . (IsColimit t, Monoid m, Functor f)
+  => DiagramOrder t
+  -> (f t -> m)
+  -> Diagram t f
   -> m
 foldOfColimit order f diag =
-  diagramFold order (\(Const a) -> f a) $ coeject diag
+  diagramFold order (\(Const t) -> f t) $ coeject diag
 
 -- | Compute the applicative fold over the
-apOfLimit :: forall a f. (IsLimit a, Applicative f) => DiagramOrder a -> Diagram a f -> f a
+apOfLimit :: forall t f. (IsLimit t, Applicative f) => DiagramOrder t -> Diagram t f -> f t
 apOfLimit order diag =
   factor identityCone <$> order (Identity <$>) diag
 
-foldOfLimit :: forall a m f. (IsLimit a, Monoid m) => DiagramOrder a -> (forall t. f t -> t -> m) -> Diagram a f -> a -> m
-foldOfLimit order f diag a =
-  let pre :: Diagram a (Const (Op m a)) = eject . bmap (Op . f) $ diag
-   in diagramFold order (\(Const (Op f')) -> f' a) pre
+foldOfLimit :: forall t m f. (IsLimit t, Monoid m) => DiagramOrder t -> (forall a. f a -> a -> m) -> Diagram t f -> t -> m
+foldOfLimit order f diag t =
+  let pre :: Diagram t (Const (Op m t)) = eject . bmap (Op . f) $ diag
+   in diagramFold order (\(Const (Op f')) -> f' t) pre

@@ -1,10 +1,14 @@
+{-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
 import Data.Cone
@@ -40,31 +44,29 @@ $(makeDiagram ''User)
 
 codecUser :: Codec User
 codecUser =
-  object $
-    allOf $
-      UserD
-        { getName =
-            "name"
-              .: (text <?> "Given and last name")
-              <?> "The name of the user"
-        , getAge =
-            "age" .: boundIntegral
-        , getContact =
-            anyOf $
-              ContactD
-                { ifNoContact = EmptyObjectCodec <?> "Leave empty for no contact"
-                , ifEmail = "email" .: text
-                , ifPhone =
-                    "phone"
-                      .: ( array
-                            . allOf
-                            $ D2
-                              { getFstOf2 = boundIntegral
-                              , getSndOf2 = text
-                              }
-                         )
-                }
-        }
+  object $ allOrdered do
+    getName
+      <:: "name"
+      .: (text <?> "Given and last name")
+      <?> "The name of the user"
+    getAge
+      <:: "age"
+      .: boundIntegral
+    getContact
+      <:: anyOrdered do
+        ifEmail
+          <:: "email"
+          .: text
+        ifPhone
+          <:: "phone"
+          .: array
+            ( allOrdered do
+                getFstOf2 <:: boundIntegral @Int
+                getSndOf2 <:: text
+            )
+        ifNoContact
+          <:: EmptyObjectCodec
+          <?> "Leave empty for no contact"
 
 main :: IO ()
 main = do

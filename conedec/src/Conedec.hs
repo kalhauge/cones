@@ -1,16 +1,20 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImpredicativeTypes #-}
+{-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuantifiedConstraints #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 {- |
@@ -30,6 +34,7 @@ module Conedec where
 -- base
 import Control.Applicative
 import Data.Functor.Contravariant
+import Data.Functor.Identity
 import Data.Monoid
 
 -- aeson
@@ -59,6 +64,10 @@ import Data.Scientific hiding (scientific)
 -- prettyprinter
 
 import Control.Monad.State.Strict (StateT (..))
+import Control.Monad.Writer
+import Data.Coerce
+import Data.Functor.Compose
+import Data.Kind
 import qualified Prettyprinter as PP
 import qualified Prettyprinter.Render.Text as PP
 
@@ -386,7 +395,7 @@ object = ObjectCodec
 array :: ArrayCodec t -> Codec t
 array = ArrayCodec
 
-boundIntegral :: (HasDimap c, HasPrimitives c, Integral i, Bounded i) => c i
+boundIntegral :: forall i c. (HasDimap c, HasPrimitives c, Integral i, Bounded i) => c i
 boundIntegral =
   dimap
     (pure . fromIntegral)
@@ -442,20 +451,96 @@ class HasDefaultDiagram c where
 instance HasDefaultDiagram ObjectCodec where
   def = bpure BrokenObjectCodec
 
+class Monad m => CodecSpecMonad c t m | m -> c t where
+  specCodec :: (forall f. LensB (Diagram t) f a) -> c a -> m ()
+
+(<::)
+  :: (LensesB (Diagram t), CodecSpecMonad c t m)
+  => (forall f. Diagram t f -> f a)
+  -> c a
+  -> m ()
+fn <:: ca = getBLens (fn blenses) `specCodec` ca
+
+newtype OrderM m (c :: Type -> Type) t g a = OrderM {getOrderM :: Diagram t (m `Compose` g) -> Writer (Ap m (Endo (Diagram t g))) a}
+  deriving (Functor, Applicative, Monad) via (ReaderT (Diagram t (m `Compose` g)) (Writer (Ap m (Endo (Diagram t g)))))
+
+instance forall m c t g. Applicative m => CodecSpecMonad c t (OrderM m c t g) where
+  specCodec :: forall a. (forall f. LensB (Diagram t) f a) -> c a -> OrderM m c t g ()
+  specCodec l _ = OrderM \diag -> do
+    tell (Ap (Endo . setter <$> getter diag))
+   where
+    setter ga = coerce . l (\_ -> Identity ga)
+    getter = coerce . l Const
+  {-# INLINE specCodec #-}
+
+runOrderM
+  :: (Applicative m, ApplicativeB (Diagram t))
+  => OrderM m c t g ()
+  -> (forall a. f a -> m (g a))
+  -> Diagram t f
+  -> m (Diagram t g)
+runOrderM (OrderM m) fn x =
+  let dt = bmap (Compose . fn) x
+   in fmap (\e -> appEndo e (bpure undefined)) . coerce $ execWriter (m dt)
+{-# INLINE runOrderM #-}
+
+newtype CodecM (c :: Type -> Type) t a = CodecM {getCodecM :: Writer (Endo (Diagram t c)) a}
+  deriving (Functor, Applicative, Monad) via (Writer (Endo (Diagram t c)))
+
+instance forall c t. CodecSpecMonad c t (CodecM c t) where
+  specCodec :: forall a. (forall f. LensB (Diagram t) f a) -> c a -> CodecM c t ()
+  specCodec l ca = CodecM do
+    tell (Endo $ setter ca)
+   where
+    setter ga = coerce . l (\_ -> Identity ga)
+  {-# INLINE specCodec #-}
+
+runCodecM
+  :: (ApplicativeB (Diagram t))
+  => CodecM c t ()
+  -> Diagram t c
+runCodecM (CodecM m) = appEndo (execWriter m) (bpure undefined)
+{-# INLINE runCodecM #-}
+
+infix 0 <::
+
+anyOrdered
+  :: (HasAnyOfCodec c, IsColimit t)
+  => (forall m. CodecSpecMonad c t m => m ())
+  -> c t
+anyOrdered o = anyOfWithOrder (runOrderM o) (runCodecM o)
+{-# INLINE anyOrdered #-}
+
+allOrdered
+  :: (HasAllOfCodec c, IsLimit t)
+  => (forall m. CodecSpecMonad c t m => m ())
+  -> c t
+allOrdered o = allOfWithOrder (runOrderM o) (runCodecM o)
+{-# INLINE allOrdered #-}
+
+allOf :: (HasAllOfCodec c, IsLimit a, TraversableB (Diagram a)) => Diagram a c -> c a
+allOf = allOfWithOrder defaultDiagramOrder
+
 class HasAllOfCodec c where
-  allOf :: (IsLimit a, TraversableB (Diagram a)) => Diagram a c -> c a
+  allOfWithOrder :: IsLimit a => DiagramOrder a -> Diagram a c -> c a
+
+anyOf :: (HasAnyOfCodec c, IsColimit a, TraversableB (Diagram a)) => Diagram a c -> c a
+anyOf = anyOfWithOrder defaultDiagramOrder
 
 class HasAnyOfCodec c where
-  anyOf :: (IsColimit a, TraversableB (Diagram a)) => Diagram a c -> c a
+  anyOfWithOrder :: IsColimit a => DiagramOrder a -> Diagram a c -> c a
 
 instance HasAllOfCodec ObjectCodec where
-  allOf = AllOfObjectCodec defaultDiagramOrder
+  allOfWithOrder = AllOfObjectCodec
 
 instance HasAnyOfCodec ObjectCodec where
-  anyOf = AnyOfObjectCodec defaultDiagramOrder
+  anyOfWithOrder = AnyOfObjectCodec
+
+instance HasAnyOfCodec Codec where
+  anyOfWithOrder = AnyOfCodec
 
 instance HasAllOfCodec ArrayCodec where
-  allOf = AllOfArrayCodec defaultDiagramOrder
+  allOfWithOrder = AllOfArrayCodec
 
 instance HasAnyOfCodec ArrayCodec where
-  anyOf = AnyOfArrayCodec defaultDiagramOrder
+  anyOfWithOrder = AnyOfArrayCodec
