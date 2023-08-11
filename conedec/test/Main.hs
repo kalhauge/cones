@@ -16,7 +16,7 @@ import Data.Cone.TH
 
 import Conedec
 import qualified Data.Text as Text
-import Prelude hiding (product)
+import Prelude hiding (all, any, product)
 
 -- aeson
 import Data.Aeson (encode)
@@ -42,28 +42,29 @@ data User = User
 $(makeDiagram ''Contact)
 $(makeDiagram ''User)
 
+codecName :: Codec Text.Text
+codecName = text <?> "Given and last name"
+
 codecUser :: Codec User
 codecUser =
-  object $ allOrdered do
+  object $ all do
     getName
       <:: "name"
-      .: (text <?> "Given and last name")
+      .: codecName
       <?> "The name of the user"
     getAge
       <:: "age"
       .: boundIntegral
     getContact
-      <:: anyOrdered do
+      <:: any do
         ifEmail
           <:: "email"
           .: text
         ifPhone
           <:: "phone"
-          .: array
-            ( allOrdered do
-                getFstOf2 <:: boundIntegral @Int
-                getSndOf2 <:: text
-            )
+          .: arrayAll do
+            getFstOf2 <:: boundIntegral
+            getSndOf2 <:: text
         ifNoContact
           <:: EmptyObjectCodec
           <?> "Leave empty for no contact"

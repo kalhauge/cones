@@ -25,9 +25,9 @@ A cone based Codec implementation.
 
 Remaining things:
 
-- [ ] Constraints
-- [ ] Adding documentation
 - [ ] Adding references and declarations
+- [ ] Add ease of life improvements, autonaming fields and stuff.
+- [ ] Adding documentation
 -}
 module Conedec where
 
@@ -38,10 +38,10 @@ import Data.Functor.Identity
 import Data.Monoid
 
 -- aeson
-import Data.Aeson as Aeson
+import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Aeson
 import qualified Data.Aeson.KeyMap as KM
-import Data.Aeson.Types
+import Data.Aeson.Types hiding (object)
 
 -- vector
 import qualified Data.Vector as V
@@ -70,6 +70,7 @@ import Data.Functor.Compose
 import Data.Kind
 import qualified Prettyprinter as PP
 import qualified Prettyprinter.Render.Text as PP
+import Prelude hiding (all)
 
 type ErrorMsg = String
 
@@ -141,6 +142,8 @@ data ArrayCodec a where
   ElementCodec
     :: Codec a
     -> ArrayCodec a
+  EmptyArrayCodec
+    :: ArrayCodec ()
 
 data ObjectCodec a where
   AllOfObjectCodec
@@ -199,6 +202,8 @@ toJSONArrayViaCodec = \case
     cofactor . bmap (Op . toJSONArrayViaCodec) $ diag
   DocArrayCodec _ c ->
     toJSONArrayViaCodec c
+  EmptyArrayCodec ->
+    const (pure mempty)
   DimapArrayCodec to _ c ->
     either fail pure . to >=> toJSONArrayViaCodec c
   ElementCodec cd ->
@@ -287,6 +292,8 @@ parseJSONArrayViaCodec = \case
     parseJSONArrayViaCodec c
   ElementCodec cd ->
     mkArrayParser (parseJSONViaCodec cd)
+  EmptyArrayCodec ->
+    pure ()
   DimapArrayCodec _ from c ->
     either fail pure . from =<< parseJSONArrayViaCodec c
 
@@ -359,6 +366,8 @@ prettyCodec = \case
       "-- " <> PP.pretty s <> PP.line <> prettyArrayCodec c
     DimapArrayCodec _ _ c ->
       prettyArrayCodec c
+    EmptyArrayCodec ->
+      "<empty>"
     ElementCodec v ->
       prettyCodec v
 
@@ -391,6 +400,9 @@ null = NullCodec
 
 object :: ObjectCodec t -> Codec t
 object = ObjectCodec
+
+class HasCodec c t where
+  object' :: (forall m. CodecSpecMonad ObjectCodec t m => m ()) -> c t
 
 array :: ArrayCodec t -> Codec t
 array = ArrayCodec
@@ -504,19 +516,31 @@ runCodecM (CodecM m) = appEndo (execWriter m) (bpure undefined)
 
 infix 0 <::
 
-anyOrdered
+any
   :: (HasAnyOfCodec c, IsColimit t)
   => (forall m. CodecSpecMonad c t m => m ())
   -> c t
-anyOrdered o = anyOfWithOrder (runOrderM o) (runCodecM o)
-{-# INLINE anyOrdered #-}
+any o = anyOfWithOrder (runOrderM o) (runCodecM o)
+{-# INLINE any #-}
 
-allOrdered
+all
   :: (HasAllOfCodec c, IsLimit t)
   => (forall m. CodecSpecMonad c t m => m ())
   -> c t
-allOrdered o = allOfWithOrder (runOrderM o) (runCodecM o)
-{-# INLINE allOrdered #-}
+all o = allOfWithOrder (runOrderM o) (runCodecM o)
+{-# INLINE all #-}
+
+arrayAll
+  :: IsLimit t
+  => (forall m. CodecSpecMonad ArrayCodec t m => m ())
+  -> Codec t
+arrayAll = array . all
+
+objectAll
+  :: IsLimit t
+  => (forall m. CodecSpecMonad ObjectCodec t m => m ())
+  -> Codec t
+objectAll = object . all
 
 allOf :: (HasAllOfCodec c, IsLimit a, TraversableB (Diagram a)) => Diagram a c -> c a
 allOf = allOfWithOrder defaultDiagramOrder
