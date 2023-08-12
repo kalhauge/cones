@@ -1,9 +1,12 @@
 {-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedLabels #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE StandaloneDeriving #-}
@@ -11,7 +14,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
-import Data.Cone
 import Data.Cone.TH
 
 import Conedec
@@ -48,26 +50,18 @@ codecName = text <?> "Given and last name"
 codecUser :: Codec User
 codecUser =
   object $ all do
-    getName
-      <:: "name"
-      .: codecName
-      <?> "The name of the user"
-    getAge
-      <:: "age"
-      .: boundIntegral
-    getContact
-      <:: any do
-        ifEmail
-          <:: "email"
-          .: text
-        ifPhone
-          <:: "phone"
-          .: arrayAll do
-            getFstOf2 <:: boundIntegral
-            getSndOf2 <:: text
-        ifNoContact
-          <:: EmptyObjectCodec
-          <?> "Leave empty for no contact"
+    #name .:: codecName <?> "The name of the user"
+    #age .:: boundIntegral
+    #contact -:: any do
+      ifEmail <:: "email" .: text
+      ifPhone
+        <:: "phone"
+        .: arrayAll do
+          at @0 -:: boundIntegral
+          at @1 -:: text
+      ifNoContact
+        <:: EmptyObjectCodec
+        <?> "Leave empty for no contact"
 
 main :: IO ()
 main = do

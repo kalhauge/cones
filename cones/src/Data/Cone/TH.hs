@@ -1,4 +1,5 @@
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE EmptyCase #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE QuasiQuotes #-}
@@ -19,9 +20,11 @@ module Data.Cone.TH (
 -- barbies
 import Barbies
 
+import Barbies.Access
 import Control.Monad
 import Data.Char
 import Data.Cone
+import Data.Functor.Const
 import Data.Functor.Contravariant
 import GHC.Generics
 import Language.Haskell.TH
@@ -31,38 +34,96 @@ data DiagramSpec a = DiagramSpec
   , dsConstructorName :: Name
   , dsFieldNames :: [(Name, a, Type)]
   }
+  deriving (Functor)
 
-makeDiagramFromSpec :: DiagramSpec a -> Q Dec
-makeDiagramFromSpec DiagramSpec{..} = do
-  let f = mkName "f"
-  dataInstD
-    (pure [])
-    ''Diagram
-    [pure dsType, varT f]
-    Nothing
-    [ recC
-        dsConstructorName
-        [ covbType n (varT f `appT` pure ts)
-        | (n, _, ts) <- dsFieldNames
-        ]
-    ]
-    [ derivClause
-        (Just StockStrategy)
-        [[t|Generic|]]
-    , derivClause
-        (Just AnyclassStrategy)
-        [[t|FunctorB|], [t|ApplicativeB|], [t|TraversableB|]]
-    ]
+makeDiagramFromSpec :: DiagramSpec a -> Q [Dec]
+makeDiagramFromSpec DiagramSpec{..} =
+  pure <$> do
+    let f = mkName "f"
+    dataInstD
+      (pure [])
+      ''Diagram
+      [pure dsType, varT f]
+      Nothing
+      [ recC
+          dsConstructorName
+          [ covbType n (varT f `appT` pure ts)
+          | (n, _, ts) <- dsFieldNames
+          ]
+      ]
+      [ derivClause
+          (Just StockStrategy)
+          [[t|Generic|]]
+      , derivClause
+          (Just AnyclassStrategy)
+          [[t|FunctorB|], [t|ApplicativeB|], [t|TraversableB|]]
+      ]
 
-makeLimitFromSpec :: Name -> DiagramSpec Name -> Q Dec
+makeIndexedFromSpec :: DiagramSpec a -> Q [Dec]
+makeIndexedFromSpec DiagramSpec{..} = do
+  indexedB <-
+    instanceD
+      (pure [])
+      [t|IndexedB (Diagram $(pure dsType))|]
+      [ valD
+          (varP 'bindexed)
+          ( normalB $
+              foldl
+                (\a (n, _) -> a `appE` [e|$(conE 'Const) $(litE $ integerL n)|])
+                (conE dsConstructorName)
+                (zip [0 ..] dsFieldNames)
+          )
+          []
+      ]
+  ixBs <-
+    sequence
+      [ instanceD
+        (pure [])
+        [t|IxB (Diagram $(pure dsType)) $(litT (numTyLit i)) $(pure t)|]
+        [funD 'bix [clause [[p|Index|]] (normalB $ varE n) []]]
+      | (i, (n, _, t)) <-
+          zip [0 ..] dsFieldNames
+      ]
+
+  pure (indexedB : ixBs)
+
+makeLabeledFromSpec :: DiagramSpec Name -> Q [Dec]
+makeLabeledFromSpec DiagramSpec{..} = do
+  indexedB <-
+    instanceD
+      (pure [])
+      [t|LabeledB (Diagram $(pure dsType))|]
+      [ valD
+          (varP 'blabeled)
+          ( normalB $
+              foldl
+                (\a (_, cn, _) -> a `appE` [e|$(conE 'Const) $(litE $ stringL (nameBase cn))|])
+                (conE dsConstructorName)
+                dsFieldNames
+          )
+          []
+      ]
+  ixBs <-
+    sequence
+      [ instanceD
+        (pure [])
+        [t|HasB (Diagram $(pure dsType)) $(litT (strTyLit (nameBase cn))) $(pure t)|]
+        [funD 'bfrom [clause [[p|Label|]] (normalB $ varE n) []]]
+      | (n, cn, t) <- dsFieldNames
+      ]
+
+  pure (indexedB : ixBs)
+
+makeLimitFromSpec :: Name -> DiagramSpec Name -> Q [Dec]
 makeLimitFromSpec cn DiagramSpec{..} =
-  instanceD
-    (pure [])
-    [t|IsLimit $(pure dsType)|]
-    [ valD (varP 'cone) makeCone []
-    , valD (varP 'coneCone) makeConecone []
-    , funD 'factor [makeFactor]
-    ]
+  pure
+    <$> instanceD
+      (pure [])
+      [t|IsLimit $(pure dsType)|]
+      [ valD (varP 'cone) makeCone []
+      , valD (varP 'coneCone) makeConecone []
+      , funD 'factor [makeFactor]
+      ]
  where
   makeCone =
     normalB $
@@ -92,41 +153,43 @@ makeLimitFromSpec cn DiagramSpec{..} =
             ]
       )
       []
-makeColimitFromSpec :: DiagramSpec (Name, [Type]) -> Q Dec
+
+makeColimitFromSpec :: DiagramSpec (Name, [Type]) -> Q [Dec]
 makeColimitFromSpec DiagramSpec{..} =
-  instanceD
-    (pure [])
-    [t|IsColimit $(pure dsType)|]
-    [ do
-        valD
-          (varP 'cocone)
-          ( normalB
-              ( recConE
-                  dsConstructorName
-                  [ fieldExp n (opConE cn ts)
-                  | (n, (cn, ts), _) <- dsFieldNames
-                  ]
-              )
-          )
-          []
-    , do
-        diag <- newName "diag"
-        a <- newName "a"
-        funD
-          'cofactor
-          [ clause
-              [varP diag, varP a]
-              ( normalB
-                  ( caseE
-                      (varE a)
-                      [ opConM cn ts (\t' -> [e|getOp ($(varE n) $(varE diag)) $t'|])
-                      | (n, (cn, ts), _) <- dsFieldNames
-                      ]
-                  )
-              )
-              []
-          ]
-    ]
+  pure
+    <$> instanceD
+      (pure [])
+      [t|IsColimit $(pure dsType)|]
+      [ do
+          valD
+            (varP 'cocone)
+            ( normalB
+                ( recConE
+                    dsConstructorName
+                    [ fieldExp n (opConE cn ts)
+                    | (n, (cn, ts), _) <- dsFieldNames
+                    ]
+                )
+            )
+            []
+      , do
+          diag <- newName "diag"
+          a <- newName "a"
+          funD
+            'cofactor
+            [ clause
+                [varP diag, varP a]
+                ( normalB
+                    ( caseE
+                        (varE a)
+                        [ opConM cn ts (\t' -> [e|getOp ($(varE n) $(varE diag)) $t'|])
+                        | (n, (cn, ts), _) <- dsFieldNames
+                        ]
+                    )
+                )
+                []
+            ]
+      ]
  where
   opConE cn t =
     [e|Op $(tupleElimE (conE cn) (length t))|]
@@ -152,22 +215,23 @@ makeColimitFromSpec DiagramSpec{..} =
       let mt = tupP [varP nm | nm <- nms]
       lamE [mt] (foldl (\a nm -> a `appE` varE nm) fn nms)
 
-makeBLensesForDiagram :: DiagramSpec a -> Q Dec
-makeBLensesForDiagram DiagramSpec{..} =
-  instanceD
-    (pure [])
-    [t|LensesB (Diagram $(pure dsType))|]
-    [ valD
-        (varP 'blenses)
-        ( normalB $
-            recConE
-              dsConstructorName
-              [ fieldExp n [e|BLens $ \fn b -> (\x -> $(recUpdE (varE 'b) [fieldExp n (varE 'x)])) <$> fn ($(varE n) b)|]
-              | (n, _, _) <- dsFieldNames
-              ]
-        )
-        []
-    ]
+makeLensesBForDiagram :: DiagramSpec a -> Q [Dec]
+makeLensesBForDiagram DiagramSpec{..} =
+  pure
+    <$> instanceD
+      (pure [])
+      [t|LensesB (Diagram $(pure dsType))|]
+      [ valD
+          (varP 'blenses)
+          ( normalB $
+              recConE
+                dsConstructorName
+                [ fieldExp n [e|$(conE 'ALensB) $ \fn b -> (\x -> $(recUpdE (varE 'b) [fieldExp n (varE 'x)])) <$> fn ($(varE n) b)|]
+                | (n, _, _) <- dsFieldNames
+                ]
+          )
+          []
+      ]
 
 {- | Given a name of an ADT, we can generate a corresponding 'Diagram' with
 correct cones and limits.
@@ -194,11 +258,14 @@ makeDiagram name = do
           (n, _, ts') <- fs
           ]
       let diagramSpec = DiagramSpec{..}
-      sequence
-        [ makeDiagramFromSpec diagramSpec
-        , makeLimitFromSpec cn diagramSpec
-        , makeBLensesForDiagram diagramSpec
-        ]
+      concat
+        <$> sequence
+          [ makeDiagramFromSpec diagramSpec
+          , makeLimitFromSpec cn diagramSpec
+          , makeLensesBForDiagram diagramSpec
+          , makeIndexedFromSpec diagramSpec
+          , makeLabeledFromSpec diagramSpec
+          ]
     _ -> do
       let dsConstructorName = mkName $ mkDiagramName (nameBase name)
       dsFieldNames <-
@@ -211,11 +278,14 @@ makeDiagram name = do
           | con <- cons
           ]
       let diagramSpec = DiagramSpec{..}
-      sequence
-        [ makeDiagramFromSpec diagramSpec
-        , makeColimitFromSpec diagramSpec
-        , makeBLensesForDiagram diagramSpec
-        ]
+      concat
+        <$> sequence
+          [ makeDiagramFromSpec diagramSpec
+          , makeColimitFromSpec diagramSpec
+          , makeLensesBForDiagram diagramSpec
+          , makeIndexedFromSpec diagramSpec
+          , makeLabeledFromSpec (fmap fst diagramSpec)
+          ]
  where
   mkDiagramName idt = idt <> "D"
   mkCoconname idt = "if" <> idt

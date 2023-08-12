@@ -1,15 +1,17 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
 {- |
 Module: Data.Cone
@@ -45,11 +47,6 @@ module Data.Cone (
   foldOfLimit,
   altOfColimit,
   foldOfColimit,
-
-  -- * Missing Barbie things
-  BLens (..),
-  LensB,
-  LensesB (..),
 ) where
 
 -- base
@@ -58,11 +55,13 @@ import Data.Functor.Contravariant
 import Data.Functor.Identity
 import Data.Kind
 import Data.Monoid
-import Data.Void
 import GHC.Generics (Generic)
 
 -- barbies
 import Barbies hiding (Void)
+
+-- cones
+import Barbies.Access
 
 {- $diagrams
 The intuition behind a diagram, *in this setting*, is that
@@ -107,32 +106,41 @@ data instance Diagram (Either a b) f = EitherD
   deriving stock (Show, Eq, Generic)
   deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
+instance IndexedB (Diagram (Either a b)) where bindexed = EitherD (Const 0) (Const 1)
+
+instance IxB (Diagram (Either a b)) 0 a where bix Index = ifLeft
+instance IxB (Diagram (Either a b)) 1 b where bix Index = ifRight
+
+instance LabeledB (Diagram (Either a b)) where blabeled = EitherD (Const "Left") (Const "Right")
+
+instance HasB (Diagram (Either a b)) "Left" a where bfrom Label = ifLeft
+instance HasB (Diagram (Either a b)) "Right" b where bfrom Label = ifRight
+
 -- | The diagram for the product
-data instance Diagram (a, b) f = D2
-  { getFstOf2 :: f a
-  , getSndOf2 :: f b
-  }
+data instance Diagram (a, b) f = Two (f a) (f b)
   deriving stock (Show, Eq, Generic)
   deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
--- | The diagram for the 3 tuple
-data instance Diagram (a, b, c) f = D3
-  { getFstOf3 :: f a
-  , getSndOf3 :: f b
-  , getTrdOf3 :: f c
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass (FunctorB, ApplicativeB, TraversableB)
+instance IndexedB (Diagram (a, b)) where bindexed = Two (Const 0) (Const 1)
 
--- | The diagram for the 4 tuple
-data instance Diagram (a, b, c, d) f = D4
-  { getFstOf4 :: f a
-  , getSndOf4 :: f b
-  , getTrdOf4 :: f c
-  , getFthOf4 :: f d
-  }
-  deriving stock (Show, Eq, Generic)
-  deriving anyclass (FunctorB, ApplicativeB, TraversableB)
+instance IxB (Diagram (a, b)) 0 a where bix Index (Two a _) = a
+instance IxB (Diagram (a, b)) 1 b where bix Index (Two _ b) = b
+
+instance LensesB (Diagram (a, b)) where
+  blenses =
+    Two
+      (ALensB \fn (Two a b) -> (`Two` b) <$> fn a)
+      (ALensB \fn (Two a b) -> Two a <$> fn b)
+
+-- -- | The diagram for the 3 tuple
+-- newtype instance Diagram (a, b, c) f = Three (f a, f b, f c)
+--   deriving stock (Show, Eq, Generic)
+--   deriving anyclass (FunctorB, ApplicativeB, TraversableB)
+--
+-- -- | The diagram for the 4 tuple
+-- newtype instance Diagram (a, b, c, d) f = Four (f a, f b, f c, f d)
+--   deriving stock (Show, Eq, Generic)
+--   deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
 {- $cones
 
@@ -160,13 +168,12 @@ class ApplicativeB (Diagram t) => IsLimit t where
   coneCone :: Cone t (Cone t ())
 
 instance IsLimit (a, b) where
-  cone = D2{getFstOf2 = fst, getSndOf2 = snd}
-  factor D2{..} b = (getFstOf2 b, getSndOf2 b)
+  cone = Two fst snd
+  factor (Two fst' snd') b = (fst' b, snd' b)
   coneCone =
-    D2
-      { getFstOf2 = (`getFstOf2` ())
-      , getSndOf2 = (`getSndOf2` ())
-      }
+    Two
+      (\(Two fst' _) -> fst' ())
+      (\(Two _ snd') -> snd' ())
 
 -- coneCone :: IsLimit a => Cone a (Cone a ())
 -- coneCone = cone
@@ -177,11 +184,11 @@ identityCone = bmap (. identityDiagramToCone) coneCone
 identityDiagramToCone :: IsLimit t => Diagram t Identity -> Cone t ()
 identityDiagramToCone = bmap (const . runIdentity)
 
-unitConeToDiagram :: IsLimit t => Cone t () -> Diagram t Identity
-unitConeToDiagram = bmap (\a -> Identity $ a ())
-
-voidCone :: IsLimit t => Cone t Void
-voidCone = bmap (const absurd) cone
+-- unitConeToDiagram :: IsLimit t => Cone t () -> Diagram t Identity
+-- unitConeToDiagram = bmap (\a -> Identity $ a ())
+--
+-- voidCone :: IsLimit t => Cone t Void
+-- voidCone = bmap (const absurd) cone
 
 {- | Use the limit ability to extract an application of the
     contravariant functor @g@ on the limit for each element in the diagram.
@@ -256,34 +263,13 @@ coeject
   -> Diagram t (Const (g t))
 coeject = bzipWith (\(Op fn) cd -> Const $ fn <$> cd) cocone
 
-unitCocone :: IsColimit t => Cocone t ()
-unitCocone = bmap (const . Op $ const ()) cocone
+-- unitCocone :: IsColimit t => Cocone t ()
+-- unitCocone = bmap (const . Op $ const ()) cocone
 
 {- $ordering
 
 The ordering of effects over diagrams.
 -}
-
--- | Diagram Lenses
-newtype BLens m b f a = BLens
-  { getBLens
-      :: (f a -> m (f a))
-      -> (b f -> m (b f))
-  }
-
-type LensB b f a = forall m. Functor m => (f a -> m (f a)) -> (b f -> m (b f))
-
-class LensesB b where
-  blenses :: Functor m => b (BLens m b f)
-
-instance LensesB (Diagram (a, b)) where
-  blenses =
-    D2
-      { getFstOf2 = BLens \fn b ->
-          (\x -> b{getFstOf2 = x}) <$> fn (getFstOf2 b)
-      , getSndOf2 = BLens \fn b ->
-          (\x -> b{getSndOf2 = x}) <$> fn (getSndOf2 b)
-      }
 
 -- | Ordering of a diagram
 type DiagramOrder t =

@@ -1,3 +1,4 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
@@ -14,6 +15,7 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
@@ -41,7 +43,7 @@ import Data.Monoid
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Aeson
 import qualified Data.Aeson.KeyMap as KM
-import Data.Aeson.Types hiding (object)
+import Data.Aeson.Types hiding (object, (.:))
 
 -- vector
 import qualified Data.Vector as V
@@ -56,6 +58,7 @@ import Control.Monad.Reader
 import qualified Data.Text as Text
 
 -- cones
+import Barbies.Access hiding (Index)
 import Data.Cone
 
 -- scientific
@@ -68,6 +71,7 @@ import Control.Monad.Writer
 import Data.Coerce
 import Data.Functor.Compose
 import Data.Kind
+import GHC.OverloadedLabels (IsLabel, fromLabel)
 import qualified Prettyprinter as PP
 import qualified Prettyprinter.Render.Text as PP
 import Prelude hiding (all)
@@ -471,7 +475,44 @@ class Monad m => CodecSpecMonad c t m | m -> c t where
   => (forall f. Diagram t f -> f a)
   -> c a
   -> m ()
-fn <:: ca = getBLens (fn blenses) `specCodec` ca
+fn <:: ca = getLensB (fn blenses) `specCodec` ca
+
+infix 0 <::
+
+newtype CodecAccess t a = CodecAccess {getCodecAccess :: forall f. Diagram t f -> f a}
+
+instance HasB (Diagram t) l a => IsLabel l (CodecAccess t a) where
+  fromLabel = CodecAccess $ get @l
+
+at :: forall n t a. IxB (Diagram t) n a => CodecAccess t a
+at = CodecAccess $ pos @n
+
+(-::)
+  :: (LensesB (Diagram t), CodecSpecMonad c t m)
+  => CodecAccess t a
+  -> c a
+  -> m ()
+fn -:: ca = getLensB (getCodecAccess fn blenses) `specCodec` ca
+
+infix 0 -::
+
+newtype CodecFieldAccess t a = CodecFieldAccess {getCodecFieldAccess :: (CodecAccess t a, String)}
+
+instance (HasB (Diagram t) l a, LabeledB (Diagram t)) => IsLabel l (CodecFieldAccess t a) where
+  fromLabel = CodecFieldAccess (a, getConst $ access blabeled)
+   where
+    a@(CodecAccess access) = fromLabel @l
+
+(.::)
+  :: (LensesB (Diagram t), CodecSpecMonad ObjectCodec t m)
+  => CodecFieldAccess t a
+  -> Codec a
+  -> m ()
+(CodecFieldAccess (CodecAccess fn, nm)) .:: ca =
+  getLensB (fn blenses)
+    `specCodec` (Aeson.fromString nm .: ca)
+
+infix 0 .::
 
 newtype OrderM m (c :: Type -> Type) t g a = OrderM {getOrderM :: Diagram t (m `Compose` g) -> Writer (Ap m (Endo (Diagram t g))) a}
   deriving (Functor, Applicative, Monad) via (ReaderT (Diagram t (m `Compose` g)) (Writer (Ap m (Endo (Diagram t g)))))
@@ -513,8 +554,6 @@ runCodecM
   -> Diagram t c
 runCodecM (CodecM m) = appEndo (execWriter m) (bpure undefined)
 {-# INLINE runCodecM #-}
-
-infix 0 <::
 
 any
   :: (HasAnyOfCodec c, IsColimit t)

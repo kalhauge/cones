@@ -20,6 +20,7 @@ extra-source-files:
 
 library
   exposed-modules:
+      Barbies.Access
       Data.Cone
       Data.Cone.TH
   other-modules:
