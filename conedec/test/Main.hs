@@ -4,6 +4,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedLabels #-}
@@ -38,34 +39,44 @@ data User = User
   { name :: Text.Text
   , age :: Int
   , contact :: Contact
+  , friends :: [User]
   }
   deriving (Show)
 
 $(makeDiagram ''Contact)
 $(makeDiagram ''User)
 
-codecName :: Codec Text.Text
+data V1
+
+instance Def "name" ValueCodec V1 Text.Text where unref = codecName
+instance Def "user" ValueCodec V1 User where unref = codecUser
+
+codecName :: Codec ValueCodec ctx Text.Text
 codecName = text <?> "Given and last name"
 
-codecUser :: Codec User
+codecUser
+  :: ( Def "name" ValueCodec ctx Text.Text
+     , Def "user" ValueCodec ctx User
+     )
+  => Codec ValueCodec ctx User
 codecUser =
   object $ all do
-    #name .:: codecName <?> "The name of the user"
-    #age .:: boundIntegral
-    #contact -:: any do
-      ifEmail <:: "email" .: text
-      ifPhone
-        <:: "phone"
-        .: arrayAll do
-          at @0 -:: boundIntegral
-          at @1 -:: text
-      ifNoContact
-        <:: EmptyObjectCodec
+    #name <: ref @"name" <?> "The name of the user"
+    #age <: boundIntegral
+    #contact =: any do
+      given ifEmail ~ "email" <: text
+      given ifPhone ~ "phone" <: arrayAll do
+        at @0 <: boundIntegral
+        at @1 <: text
+      given ifNoContact
+        =: emptyObject
         <?> "Leave empty for no contact"
+    #friends
+      <: manyOfList (ref @"user")
 
 main :: IO ()
 main = do
-  debugCodec codecUser
-  value <- toJSONViaCodec codecUser $ User "Peter" 20 (Phone 21 "23244123")
+  debugCodec @V1 codecUser
+  value <- toJSONViaCodec @V1 codecUser $ User "Peter" 20 (Phone 21 "23244123") [User "Marie" 23 NoContact []]
   BS.putStrLn $ encode value
-  print $ parse (parseJSONViaCodec codecUser) value
+  print $ parse (parseJSONViaCodec @V1 codecUser) value

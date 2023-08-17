@@ -1,7 +1,9 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BlockArguments #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ImpredicativeTypes #-}
@@ -11,9 +13,12 @@
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Conedec.Codec (
   Codec (..),
+  Ref (..),
+  Def (..),
   destroy,
   build,
   ValueCodec (..),
@@ -31,7 +36,7 @@ module Conedec.Codec (
 import Control.Applicative
 import Data.Functor.Contravariant
 import Data.Monoid hiding (Product, Sum)
-import Data.String
+import Data.Void
 
 -- aeson
 import qualified Data.Aeson as Aeson
@@ -43,7 +48,7 @@ import Data.Aeson.Types hiding (object, (.:))
 import qualified Data.Vector as V
 
 -- barbies
-import Barbies
+import Barbies hiding (Void)
 
 -- mtl
 import Control.Monad.Reader
@@ -59,103 +64,114 @@ import Data.Cone
 import Data.Scientific hiding (scientific)
 
 -- prettyprinter
+
+import Control.Monad.Writer
+import qualified Data.Aeson.KeyMap as Aeson
+import Data.Proxy
+import GHC.TypeLits
 import qualified Prettyprinter as PP
 import qualified Prettyprinter.Render.Text as PP
 
-type ErrorMsg = String
+data Ref (s :: Symbol) = Ref
+
+class Def (s :: Symbol) e ctx a | ctx s -> e a where
+  unref :: Codec e ctx a
 
 {- | A redesign of the codec.
 
 The codec contains of three type variables context @ctx@, encoder @e@ and type @t@.
 -}
-data Codec ctx e a where
+data Codec e ctx a where
   -- | All codecs can be created in a broken state, to ease development.
   -- This is easy to check for though.
-  Broken
-    :: Codec ctx e a
+  BrokenCodec
+    :: Codec e ctx a
   -- | A Sum of different codec, choosing the first matching when parsing.
-  Sum
+  SumCodec
     :: (IsColimit a)
     => DiagramOrder a
-    -> Diagram a (Codec ctx e)
-    -> Codec ctx e a
+    -> Diagram a (Codec e ctx)
+    -> Codec e ctx a
   -- | A Product of different codec, where the order of the elements is decided by the order.
-  Product
+  ProductCodec
     :: (IsLimit a)
     => DiagramOrder a
-    -> Diagram a (Codec ctx e)
-    -> Codec ctx e a
+    -> Diagram a (Codec e ctx)
+    -> Codec e ctx a
   -- | Adding a line of documentation to the codec.
-  Documentation
+  DocumentationCodec
     :: Text.Text
-    -> Codec ctx e a
-    -> Codec ctx e a
-  Dimap
-    :: (b -> Either ErrorMsg a)
-    -> (a -> Either ErrorMsg b)
-    -> Codec ctx e a
-    -> Codec ctx e b
-  Reference
-    :: ctx a
-    -> Codec ctx e a
-  Element
+    -> Codec e ctx a
+    -> Codec e ctx a
+  DimapCodec
+    :: (b -> Either String a)
+    -> (a -> Either String b)
+    -> Codec e ctx a
+    -> Codec e ctx b
+  -- | The reference codec.
+  -- The trick here is to ensure that there exist only one Codec per context and name.
+  ReferenceCodec
+    :: (KnownSymbol s, Def s e ctx a)
+    => Ref s
+    -> Codec e ctx a
+  ElementCodec
     :: e ctx a
-    -> Codec ctx e a
+    -> Codec e ctx a
 
 data ValueCodec ctx a where
   NullCodec :: ValueCodec ctx ()
   StringCodec :: ValueCodec ctx Text.Text
   BoolCodec :: ValueCodec ctx Bool
   NumberCodec :: ValueCodec ctx Scientific
-  ManyOfCodec :: Codec ctx ValueCodec a -> ValueCodec ctx (V.Vector a)
-  ArrayCodec :: Codec ctx ArrayCodec a -> ValueCodec ctx a
-  ObjectCodec :: Codec ctx ObjectCodec a -> ValueCodec ctx a
+  ManyOfCodec :: Codec ValueCodec ctx a -> ValueCodec ctx (V.Vector a)
+  ArrayCodec :: Codec ArrayCodec ctx a -> ValueCodec ctx a
+  ObjectCodec :: Codec ObjectCodec ctx a -> ValueCodec ctx a
 
 data ObjectCodec ctx a where
   EmptyObjectCodec :: ObjectCodec ctx ()
   FieldCodec
     :: Key
-    -> Codec ctx ValueCodec a
+    -> Codec ValueCodec ctx a
     -> ObjectCodec ctx a
 
 data ArrayCodec ctx a where
   EmptyArrayCodec :: ArrayCodec ctx ()
   SingleCodec
-    :: Codec ctx ValueCodec a
+    :: Codec ValueCodec ctx a
     -> ArrayCodec ctx a
 
-destroy :: (MonadFail m, Monoid x) => (forall t. e ctx t -> t -> m x) -> Codec ctx e a -> a -> m x
+destroy :: forall ctx e a m x. (MonadFail m, Monoid x) => (forall t. e ctx t -> t -> m x) -> Codec e ctx a -> a -> m x
 destroy fn = \case
-  Broken ->
+  BrokenCodec ->
     const $ fail "broken"
-  Sum _ diag ->
+  SumCodec _ diag ->
     cofactor (bmap (Op . destroy fn) diag)
-  Product order diag ->
+  ProductCodec order diag ->
     getAp . foldOfLimit order (\c -> Ap . destroy fn c) diag
-  Dimap to _ c ->
+  DimapCodec to _ c ->
     either fail pure . to >=> destroy fn c
-  Documentation _ c ->
+  DocumentationCodec _ c ->
     destroy fn c
-  Reference _ ->
-    undefined
-  Element c ->
+  ReferenceCodec (Ref :: Ref s) ->
+    destroy fn (unref @s @e @ctx)
+  ElementCodec c ->
     fn c
 
-build :: (Alternative m, MonadFail m) => (forall t. e ctx t -> m t) -> Codec ctx e a -> m a
+build :: forall ctx e m a. (Alternative m, MonadFail m) => (forall t. e ctx t -> m t) -> Codec e ctx a -> m a
 build fn = \case
-  Broken ->
+  BrokenCodec ->
     fail "broken"
-  Sum order diag ->
+  SumCodec order diag ->
     altOfColimit order . bmap (build fn) $ diag
-  Product order diag ->
+  ProductCodec order diag ->
     apOfLimit order . bmap (build fn) $ diag
-  Dimap _ from c ->
+  DimapCodec _ from c ->
     build fn c >>= either fail pure . from
-  Documentation _ c ->
+  DocumentationCodec _ c ->
     build fn c
-  Reference _ ->
-    undefined
-  Element c ->
+  ReferenceCodec (Ref :: Ref s) ->
+    build fn (unref @s @e @ctx)
+  ElementCodec c ->
     fn c
 
 data ZeroOrMore a = Zero | One a | More
@@ -178,7 +194,7 @@ expectOne fn =
     Zero -> fail "expected at least one element"
     More -> fail "expected no more than one element"
 
-toJSONViaCodec :: forall m ctx a. MonadFail m => Codec ctx ValueCodec a -> a -> m Value
+toJSONViaCodec :: forall ctx m a. MonadFail m => Codec ValueCodec ctx a -> a -> m Value
 toJSONViaCodec c a = do
   expectOne $ destroy (\e t -> One <$> toJSONViaValueCodec e t) c a
  where
@@ -213,11 +229,11 @@ toJSONViaCodec c a = do
     SingleCodec ca ->
       fmap V.singleton . toJSONViaCodec ca
 
-parseJSONViaCodec :: forall ctx a. Codec ctx ValueCodec a -> Value -> Parser a
+parseJSONViaCodec :: forall ctx a. Codec ValueCodec ctx a -> Value -> Parser a
 parseJSONViaCodec c =
   runReaderT $ build parseJSONViaValueCodec c
  where
-  parseJSONViaValueCodec :: ValueCodec ctx t -> ReaderT Value Parser t
+  parseJSONViaValueCodec :: forall t. ValueCodec ctx t -> ReaderT Value Parser t
   parseJSONViaValueCodec cd = ReaderT $ case cd of
     NullCodec -> \case
       Null -> pure ()
@@ -232,7 +248,7 @@ parseJSONViaCodec c =
       Bool b -> pure b
       v -> typeMismatch "Bool" v
     ManyOfCodec ca -> \case
-      Array arr -> V.mapM (parseJSONViaCodec ca) arr
+      Array arr -> V.mapM (runReaderT $ build parseJSONViaValueCodec ca) arr
       v -> typeMismatch "Array" v
     ArrayCodec ca ->
       runArrayParser "no-name" (build parseJSONViaArrayCodec ca)
@@ -283,61 +299,89 @@ runArrayParser n (ArrayParser f) = withArray n \arr ->
 Here:
 -}
 
-prettyCodec :: Codec ctx ValueCodec a -> PP.Doc ann
+type Pretty = Writer (Aeson.KeyMap (PP.Doc Void)) (PP.Doc Void)
+
+prettyCodec :: forall ctx a. Codec ValueCodec ctx a -> Pretty
 prettyCodec = prettyViaCodec prettyViaValueCodec
  where
-  prettyViaCodec :: (forall b. e ctx b -> PP.Doc ann) -> Codec ctx e t -> PP.Doc ann
+  prettyViaCodec :: (forall b. e ctx b -> Pretty) -> Codec e ctx t -> Pretty
   prettyViaCodec fn = \case
-    Broken ->
-      ">broken<"
-    Sum order diag ->
-      "any"
-        PP.<+> (PP.line <> PP.vcat (diagramFold order (\a -> ["+ " <> PP.nest 2 (prettyViaCodec fn a)]) diag))
-    Product order diag ->
-      "all"
-        PP.<+> (PP.line <> PP.vcat (diagramFold order (\a -> ["* " <> PP.nest 2 (prettyViaCodec fn a)]) diag))
-    Documentation s c ->
-      "-- " <> PP.pretty s <> PP.line <> prettyViaCodec fn c
-    Reference _ ->
-      undefined
-    Dimap _ _ c ->
+    BrokenCodec ->
+      pure ">broken<"
+    SumCodec order diag -> do
+      res <-
+        getAp $
+          diagramFold
+            order
+            ( \a -> Ap do
+                res <- prettyViaCodec fn a
+                pure ["+ " <> PP.nest 2 res]
+            )
+            diag
+      pure $ "any" PP.<+> (PP.line <> PP.vcat res)
+    ProductCodec order diag -> do
+      res <-
+        getAp $
+          diagramFold
+            order
+            ( \a -> Ap do
+                res <- prettyViaCodec fn a
+                pure ["* " <> PP.nest 2 res]
+            )
+            diag
+      pure $ "all" PP.<+> (PP.line <> PP.vcat res)
+    DocumentationCodec s c -> do
+      res <- prettyViaCodec fn c
+      pure $ "-- " <> PP.pretty s <> PP.line <> res
+    ReferenceCodec (Ref :: Ref s) -> do
+      -- let (n, ca) = f ctx
+      -- x <- prettyViaCodec fn ca
+      -- tell (Aeson.singleton (Aeson.fromText n) x)
+      pure $ "<" <> PP.pretty (symbolVal (Proxy :: Proxy s)) <> ">"
+    DimapCodec _ _ c ->
       prettyViaCodec fn c
-    Element c ->
+    ElementCodec c ->
       fn c
 
-  prettyViaValueCodec :: ValueCodec e t -> PP.Doc ann
+  prettyViaValueCodec :: forall t. ValueCodec ctx t -> Pretty
   prettyViaValueCodec = \case
-    ManyOfCodec a ->
-      "manyOf" PP.<+> prettyViaCodec prettyViaValueCodec a
     StringCodec ->
-      "<string>"
+      pure "<string>"
     NumberCodec ->
-      "<number>"
+      pure "<number>"
     NullCodec ->
-      "null"
+      pure "null"
     BoolCodec ->
-      "<bool>"
-    ArrayCodec a ->
-      "array" PP.<+> prettyViaCodec prettyViaArrayCodec a
-    ObjectCodec a ->
-      "object" PP.<+> prettyViaCodec prettyViaObjectCodec a
+      pure "<bool>"
+    ManyOfCodec a -> do
+      res <- prettyViaCodec prettyViaValueCodec a
+      pure $ "manyOf" PP.<+> res
+    ArrayCodec a -> do
+      res <- prettyViaCodec prettyViaArrayCodec a
+      pure $ "array" PP.<+> res
+    ObjectCodec a -> do
+      res <- prettyViaCodec prettyViaObjectCodec a
+      pure $ "object" PP.<+> res
 
-  prettyViaObjectCodec :: ObjectCodec e b -> PP.Doc ann
+  prettyViaObjectCodec :: forall t. ObjectCodec ctx t -> Pretty
   prettyViaObjectCodec = \case
-    EmptyObjectCodec -> "<empty>"
-    FieldCodec k cd ->
-      PP.hsep
-        [PP.pretty (Aeson.toString k), ":", PP.nest 2 (prettyViaCodec prettyViaValueCodec cd)]
+    EmptyObjectCodec -> pure "<empty>"
+    FieldCodec k cd -> do
+      res <- prettyViaCodec prettyViaValueCodec cd
+      pure $ PP.hsep [PP.pretty (Aeson.toString k), ":", PP.nest 2 res]
 
-  prettyViaArrayCodec :: ArrayCodec e b -> PP.Doc ann
+  prettyViaArrayCodec :: forall t. ArrayCodec ctx t -> Pretty
   prettyViaArrayCodec = \case
-    EmptyArrayCodec -> "<empty>"
+    EmptyArrayCodec -> pure "<empty>"
     SingleCodec cd ->
       prettyViaCodec prettyViaValueCodec cd
 
-debugCodec :: Codec ctx ValueCodec a -> IO ()
+debugCodec :: Codec ValueCodec ctx a -> IO ()
 debugCodec c = do
   putStrLn "------"
-  PP.putDoc $ prettyCodec c
-  putStrLn ""
+  let (res, deps) = runWriter $ prettyCodec c
+  forM_ deps \d ->
+    PP.putDoc (d <> PP.line)
+  putStrLn "------"
+  PP.putDoc (res <> PP.line)
   putStrLn "------"

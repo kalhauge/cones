@@ -61,6 +61,6 @@
             fourmolu
           ]);
         };
-      overlays = overlays;
+      inherit overlays;
     });
 }
