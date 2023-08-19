@@ -15,13 +15,11 @@
         "conedec" = p.callCabal2nixWithOptions "conedec" "${self}/conedec" "" { };
       };
       overlays = final: prev: {
-        haskellPackages = prev.haskellPackages.extend
-          # (final.lib.composeExtensions (old.overrides or (_: _: { }))
-          (p: _: packages p);
+        haskellPackages = prev.haskellPackages.extend (p: _: packages p);
       };
     in
     {
-      inherit overlays;
+      overlays.default = overlays;
     } //
     flake-utils.lib.eachDefaultSystem
       (system:
@@ -37,35 +35,32 @@
           cones = hpkgs.cones;
           conedec = hpkgs.conedec;
         };
-        devShells.default = hpkgs.shellFor
-          {
-            name = "cones-shell";
-            packages = p:
-              [ p.cones p.conedec ];
-            # doBenchmark = true;
-            withHoogle = true;
-            buildInputs = (with hpkgs; [
+        devShells =
+          let
+            buildInputs = with hpkgs; [
               cabal-install
               ghcid
               haskell-language-server
               hpack
               fourmolu
-            ]);
-          };
-        devShells.conedec = hpkgs.shellFor
-          {
-            name = "conedec-shell";
-            packages = p:
-              [ p.conedec ];
-            # doBenchmark = true;
+            ];
             withHoogle = true;
-            buildInputs = (with hpkgs; [
-              cabal-install
-              ghcid
-              haskell-language-server
-              hpack
-              fourmolu
-            ]);
+          in
+          {
+            default = hpkgs.shellFor
+              {
+                name = "cones-shell";
+                packages = p:
+                  [ p.cones p.conedec ];
+                inherit buildInputs withHoogle;
+              };
+            conedec = hpkgs.shellFor
+              {
+                name = "conedec-shell";
+                packages = p:
+                  [ p.conedec ];
+                inherit buildInputs withHoogle;
+              };
           };
       });
 }
