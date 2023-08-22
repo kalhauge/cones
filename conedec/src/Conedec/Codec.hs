@@ -72,7 +72,7 @@ import GHC.TypeLits
 import qualified Prettyprinter as PP
 import qualified Prettyprinter.Render.Text as PP
 
-data Ref (s :: Symbol) = Ref
+data Ref (s :: Symbol) = KnownSymbol s => Ref
 
 class Def (s :: Symbol) e ctx a | ctx s -> e a where
   unref :: Codec e ctx a
@@ -111,7 +111,7 @@ data Codec e ctx a where
   -- | The reference codec.
   -- The trick here is to ensure that there exist only one Codec per context and name.
   ReferenceCodec
-    :: (KnownSymbol s, Def s e ctx a)
+    :: (Def s e ctx a)
     => Ref s
     -> Codec e ctx a
   ElementCodec
@@ -299,7 +299,10 @@ runArrayParser n (ArrayParser f) = withArray n \arr ->
 Here:
 -}
 
-type Pretty = Writer (Aeson.KeyMap (PP.Doc Void)) (PP.Doc Void)
+newtype PrettyM a = PrettyM {runPrettyM :: ReaderT (Aeson.KeyMap ()) (Writer [(Key, Pretty)]) a}
+  deriving newtype (Functor, Applicative, Monad, MonadWriter [(Key, Pretty)], MonadReader (Aeson.KeyMap ()))
+
+type Pretty = PrettyM (PP.Doc Void)
 
 prettyCodec :: forall ctx a. Codec ValueCodec ctx a -> Pretty
 prettyCodec = prettyViaCodec prettyViaValueCodec
@@ -334,10 +337,13 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
       res <- prettyViaCodec fn c
       pure $ "-- " <> PP.pretty s <> PP.line <> res
     ReferenceCodec (Ref :: Ref s) -> do
-      -- let (n, ca) = f ctx
-      -- x <- prettyViaCodec fn ca
-      -- tell (Aeson.singleton (Aeson.fromText n) x)
-      pure $ "<" <> PP.pretty (symbolVal (Proxy :: Proxy s)) <> ">"
+      let n = symbolVal (Proxy :: Proxy s)
+      let k = Aeson.fromString n
+      let ca = unref @s
+      alreadyMember <- asks (Aeson.member k)
+      unless alreadyMember do
+        tell [(k, prettyViaCodec fn ca)]
+      pure $ "<" <> PP.pretty n <> ">"
     DimapCodec _ _ c ->
       prettyViaCodec fn c
     ElementCodec c ->
@@ -379,9 +385,15 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
 debugCodec :: Codec ValueCodec ctx a -> IO ()
 debugCodec c = do
   putStrLn "------"
-  let (res, deps) = runWriter $ prettyCodec c
-  forM_ deps \d ->
-    PP.putDoc (d <> PP.line)
-  putStrLn "------"
+  let (res, deps) = runWriter $ runReaderT (runPrettyM $ prettyCodec c) Aeson.empty
   PP.putDoc (res <> PP.line)
   putStrLn "------"
+  go (Aeson.fromList $ map (\(a, _) -> (a, ())) deps) deps
+  putStrLn "------"
+ where
+  go keys = \case
+    [] -> pure ()
+    (k, v) : xs -> do
+      let (res, deps) = runWriter $ runReaderT (runPrettyM v) keys
+      PP.putDoc $ "<" <> PP.pretty (Aeson.toText k) <> ">" <> " ::= " <> PP.nest 2 res <> PP.line
+      go (keys <> Aeson.fromList (map (\(a, _) -> (a, ())) deps)) (deps <> xs)
