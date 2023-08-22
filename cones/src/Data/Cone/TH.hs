@@ -238,17 +238,26 @@ correct cones and limits.
 -}
 makeDiagram :: Name -> Q [Dec]
 makeDiagram name = do
-  TyConI c <- reify name
-  (ts, cons) <- case c of
-    DataD [] _ ts Nothing cons _ -> do
-      pure (ts, cons)
-    a -> fail $ "makeDiagram currently does not support: " <> show a
+  let
+    getTypesCons :: Name -> Q ([Type], [Con])
+    getTypesCons n = do
+      TyConI c <- reify n
+      case c of
+        DataD [] _ ts Nothing cons _ -> do
+          ts' <- mapM (varT . typeName) ts
+          pure (ts', cons)
+        TySynD _ [] (AppT (ConT a) b) -> do
+          (_ : ts, cons) <- getTypesCons a
+          pure (b : ts, cons)
+        a -> fail $ "makeDiagram currently does not support: " <> show a
 
-  let theTypeNames = typeNames ts
-  dsType <- mkType name theTypeNames
+  (ts, cons) <- getTypesCons name
+
+  --  makeDiagram currently does not support: TySynD Jvmhs.Data.Code.ByteCodeInst [] (AppT (ConT Language.JVM.ByteCode.ByteCodeInst) (ConT Language.JVM.Stage.High))
+  dsType <- mkType name ts
   -- let theDiagramType = [t|Diagram $theType|]
   case cons of
-    [] -> fail $ "makeDiagram currently does not support: " <> show c
+    [] -> fail $ "makeDiagram currently does not support: " <> show name
     [RecC cn fs] -> do
       let dsConstructorName = mkName $ mkDiagramName (nameBase name)
       dsFieldNames <-
@@ -300,11 +309,11 @@ makeDiagram name = do
 covbType :: Quote m => Name -> m Type -> m VarBangType
 covbType n = varBangType n . bangType (bang noSourceUnpackedness noSourceStrictness)
 
-mkType :: Name -> [Name] -> Q Type
-mkType n = foldl (\a t -> a `appT` varT t) (conT n)
+mkType :: Name -> [Type] -> Q Type
+mkType n = foldl (\a t -> a `appT` pure t) (conT n)
 
-typeNames :: [TyVarBndr flag] -> [Name]
-typeNames = map \case
+typeName :: TyVarBndr flag -> Name
+typeName = \case
   PlainTV t _ -> t
   KindedTV t _ _ -> t
 
