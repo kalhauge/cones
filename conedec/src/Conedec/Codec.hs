@@ -19,6 +19,7 @@ module Conedec.Codec (
   Codec (..),
   Ref (..),
   Def (..),
+  Doc,
   destroy,
   build,
   ValueCodec (..),
@@ -30,6 +31,10 @@ module Conedec.Codec (
   debugCodec,
   -- parseJSONViaCodec,
   -- toJSONViaCodec,
+
+  -- helpers
+  WithError (..),
+  withError,
 ) where
 
 -- base
@@ -77,6 +82,8 @@ data Ref (s :: Symbol) = KnownSymbol s => Ref
 class Def (s :: Symbol) e ctx a | ctx s -> e a where
   unref :: Codec e ctx a
 
+type Doc = PP.Doc Void
+
 {- | A redesign of the codec.
 
 The codec contains of three type variables context @ctx@, encoder @e@ and type @t@.
@@ -98,11 +105,6 @@ data Codec e ctx a where
     => DiagramOrder a
     -> Diagram a (Codec e ctx)
     -> Codec e ctx a
-  -- | Adding a line of documentation to the codec.
-  DocumentationCodec
-    :: Text.Text
-    -> Codec e ctx a
-    -> Codec e ctx a
   DimapCodec
     :: (b -> Either String a)
     -> (a -> Either String b)
@@ -116,6 +118,16 @@ data Codec e ctx a where
     -> Codec e ctx a
   ElementCodec
     :: e ctx a
+    -> Codec e ctx a
+  -- | Adding a line of documentation to the codec.
+  DocumentationCodec
+    :: Doc
+    -> Codec e ctx a
+    -> Codec e ctx a
+  ExampleCodec
+    :: a
+    -> (a -> Doc)
+    -> Codec e ctx a
     -> Codec e ctx a
 
 data ValueCodec ctx a where
@@ -150,12 +162,14 @@ destroy fn = \case
     getAp . foldOfLimit order (\c -> Ap . destroy fn c) diag
   DimapCodec to _ c ->
     either fail pure . to >=> destroy fn c
-  DocumentationCodec _ c ->
-    destroy fn c
   ReferenceCodec (Ref :: Ref s) ->
     destroy fn (unref @s @e @ctx)
   ElementCodec c ->
     fn c
+  DocumentationCodec _ c ->
+    destroy fn c
+  ExampleCodec _ _ c ->
+    destroy fn c
 
 build :: forall ctx e m a. (Alternative m, MonadFail m) => (forall t. e ctx t -> m t) -> Codec e ctx a -> m a
 build fn = \case
@@ -167,12 +181,14 @@ build fn = \case
     apOfLimit order . bmap (build fn) $ diag
   DimapCodec _ from c ->
     build fn c >>= either fail pure . from
-  DocumentationCodec _ c ->
-    build fn c
   ReferenceCodec (Ref :: Ref s) ->
     build fn (unref @s @e @ctx)
   ElementCodec c ->
     fn c
+  DocumentationCodec _ c ->
+    build fn c
+  ExampleCodec _ _ c ->
+    build fn c
 
 data ZeroOrMore a = Zero | One a | More
   deriving (Show)
@@ -302,6 +318,15 @@ Here:
 newtype PrettyM a = PrettyM {runPrettyM :: ReaderT (Aeson.KeyMap ()) (Writer [(Key, Pretty)]) a}
   deriving newtype (Functor, Applicative, Monad, MonadWriter [(Key, Pretty)], MonadReader (Aeson.KeyMap ()))
 
+newtype WithError a = WithError {runWithError :: Either String a}
+  deriving newtype (Functor, Applicative, Alternative, MonadPlus, Monad)
+
+instance MonadFail WithError where
+  fail = WithError . Left
+
+withError :: (String -> a) -> WithError a -> a
+withError hdl = either hdl id . runWithError
+
 type Pretty = PrettyM (PP.Doc Void)
 
 prettyCodec :: forall ctx a. Codec ValueCodec ctx a -> Pretty
@@ -321,7 +346,7 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
                 pure ["+ " <> PP.nest 2 res]
             )
             diag
-      pure $ "any" PP.<+> (PP.line <> PP.vcat res)
+      pure $ PP.vcat res
     ProductCodec order diag -> do
       res <-
         getAp $
@@ -332,10 +357,7 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
                 pure ["* " <> PP.nest 2 res]
             )
             diag
-      pure $ "all" PP.<+> (PP.line <> PP.vcat res)
-    DocumentationCodec s c -> do
-      res <- prettyViaCodec fn c
-      pure $ "-- " <> PP.pretty s <> PP.line <> res
+      pure $ PP.vcat res
     ReferenceCodec (Ref :: Ref s) -> do
       let n = symbolVal (Proxy :: Proxy s)
       let k = Aeson.fromString n
@@ -348,6 +370,12 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
       prettyViaCodec fn c
     ElementCodec c ->
       fn c
+    DocumentationCodec s c -> do
+      res <- prettyViaCodec fn c
+      pure $ res <> PP.line <> "-- " <> s
+    ExampleCodec a f c -> do
+      res <- prettyViaCodec fn c
+      pure $ res <> PP.line <> "! " <> f a
 
   prettyViaValueCodec :: forall t. ValueCodec ctx t -> Pretty
   prettyViaValueCodec = \case
@@ -364,17 +392,17 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
       pure $ "manyOf" PP.<+> res
     ArrayCodec a -> do
       res <- prettyViaCodec prettyViaArrayCodec a
-      pure $ "array" PP.<+> res
+      pure $ "array" PP.<> PP.line PP.<> res
     ObjectCodec a -> do
       res <- prettyViaCodec prettyViaObjectCodec a
-      pure $ "object" PP.<+> res
+      pure $ "object" PP.<> PP.line PP.<> res
 
   prettyViaObjectCodec :: forall t. ObjectCodec ctx t -> Pretty
   prettyViaObjectCodec = \case
     EmptyObjectCodec -> pure "<empty>"
     FieldCodec k cd -> do
       res <- prettyViaCodec prettyViaValueCodec cd
-      pure $ PP.hsep [PP.pretty (Aeson.toString k), ":", PP.nest 2 res]
+      pure $ PP.hsep [PP.pretty (Aeson.toString k), ":", res]
 
   prettyViaArrayCodec :: forall t. ArrayCodec ctx t -> Pretty
   prettyViaArrayCodec = \case

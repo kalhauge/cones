@@ -126,6 +126,11 @@ instance IndexedB (Diagram (a, b)) where bindexed = Two (Const 0) (Const 1)
 instance IxB (Diagram (a, b)) 0 a where bix Index (Two a _) = a
 instance IxB (Diagram (a, b)) 1 b where bix Index (Two _ b) = b
 
+instance LabeledB (Diagram (a, b)) where blabeled = Two (Const "fst") (Const "snd")
+
+instance HasB (Diagram (a, b)) "fst" a where bfrom Label (Two a _) = a
+instance HasB (Diagram (a, b)) "snd" b where bfrom Label (Two _ b) = b
+
 instance LensesB (Diagram (a, b)) where
   blenses =
     Two

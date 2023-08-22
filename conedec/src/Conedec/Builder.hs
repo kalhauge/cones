@@ -8,6 +8,8 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ImpredicativeTypes #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
@@ -41,6 +43,7 @@ import Control.Monad.Writer
 
 -- text
 import qualified Data.Text as Text
+import qualified Data.Text.Lazy.Encoding as Text
 
 -- cones
 import Barbies.Access hiding (Index)
@@ -55,27 +58,50 @@ import Prelude hiding (all, any, null)
 
 -- conedec
 import Conedec.Codec
+import qualified Data.Aeson as Aeson
+import Data.Functor.Product
 import Data.Kind
 import Data.Proxy (Proxy (..))
+import Data.String
 import qualified Data.Vector as V
 import GHC.TypeLits (KnownSymbol, symbolVal)
+import qualified Prettyprinter as PP
 
 {- $builders
 These are the builders:
 -}
 
 any
-  :: (IsColimit t)
+  :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
   => (forall m. CodecSpecMonad t e ctx m => m ())
   -> Codec e ctx t
-any o = SumCodec (runOrderM o) (runCodecM o)
+any o = annotateMistakes o $ SumCodec (runOrderM o) (runCodecM o)
 {-# INLINE any #-}
 
 all
-  :: (IsLimit t)
+  :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
   => (forall m. CodecSpecMonad t e ctx m => m ())
   -> Codec e ctx t
-all o = ProductCodec (runOrderM o) (runCodecM o)
+all o = annotateMistakes o $ ProductCodec (runOrderM o) (runCodecM o)
+
+annotateMistakes
+  :: ( TraversableB (Diagram t)
+     , ApplicativeB (Diagram t)
+     , LabeledB (Diagram t)
+     )
+  => (forall m. CodecSpecMonad t e ctx m => m ())
+  -> Codec e ctx a
+  -> Codec e ctx a
+annotateMistakes o c' = fixMistakes c' mistakes
+ where
+  mistakes = bfoldMap (\(Pair (Const s) (Const (Sum a))) -> [(s, a) | a /= 1]) (bzip blabeled (runCountM o))
+  fixMistakes c = \case
+    [] -> c
+    (k, v) : ks ->
+      fixMistakes
+        ( c <?> ("warning: " <> fromString k <> " set " <> fromString (show v) <> " times")
+        )
+        ks
 {-# INLINE all #-}
 
 dimap
@@ -95,30 +121,42 @@ bimap fa fb = dimap (pure . fa) (pure . fb)
 {-# INLINE bimap #-}
 
 arrayAll
-  :: (IsLimit t)
+  :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
   => (forall m. CodecSpecMonad t ArrayCodec ctx m => m ())
   -> Codec ValueCodec ctx t
 arrayAll = array . all
 {-# INLINE arrayAll #-}
 
 objectAll
-  :: (IsLimit t)
+  :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
   => (forall m. CodecSpecMonad t ObjectCodec ctx m => m ())
   -> Codec ValueCodec ctx t
 objectAll = object . all
 {-# INLINE objectAll #-}
 
-arrayAny :: IsColimit t => (forall m. CodecSpecMonad t ArrayCodec ctx m => m ()) -> Codec ValueCodec ctx t
+arrayAny :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t)) => (forall m. CodecSpecMonad t ArrayCodec ctx m => m ()) -> Codec ValueCodec ctx t
 arrayAny = array . any
 {-# INLINE arrayAny #-}
 
-objectAny :: IsColimit t => (forall m. CodecSpecMonad t ObjectCodec ctx m => m ()) -> Codec ValueCodec ctx t
+objectAny :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t)) => (forall m. CodecSpecMonad t ObjectCodec ctx m => m ()) -> Codec ValueCodec ctx t
 objectAny = object . any
 {-# INLINE objectAny #-}
 
-(<?>) :: Codec e ctx a -> Text.Text -> Codec e ctx a
+(<?>) :: Codec e ctx a -> Doc -> Codec e ctx a
 (<?>) = flip DocumentationCodec
 infixl 6 <?>
+
+(<!>) :: Codec ValueCodec ctx a -> a -> Codec ValueCodec ctx a
+c <!> a =
+  ExampleCodec
+    a
+    ( \a' ->
+        withError
+          (\msg -> "could not encode example: " <> fromString msg)
+          (PP.pretty . Text.decodeUtf8 . Aeson.encode <$> toJSONViaCodec c a')
+    )
+    c
+infixl 6 <!>
 
 ref :: forall s ctx e a. (KnownSymbol s, Def s e ctx a) => Codec e ctx a
 ref = ReferenceCodec (Ref @s)
@@ -286,3 +324,20 @@ runCodecM
   -> Diagram t (Codec e ctx)
 runCodecM (CodecM m) = appEndo (execWriter m) (bpure undefined)
 {-# INLINE runCodecM #-}
+
+newtype CountM t (e :: Type -> Type -> Type) ctx a = CountM {getCountM :: Writer (Endo (Diagram t (Const (Sum Int)))) a}
+  deriving (Functor, Applicative, Monad) via (Writer (Endo (Diagram t (Const (Sum Int)))))
+
+instance CodecSpecMonad t e ctx (CountM t e ctx) where
+  specCodec l _ = CountM do
+    tell (Endo incr)
+   where
+    incr = coerce . l (\a -> Identity (a <> Const (Sum 1)))
+  {-# INLINE specCodec #-}
+
+runCountM
+  :: (ApplicativeB (Diagram t))
+  => CountM t e ctx ()
+  -> Diagram t (Const (Sum Int))
+runCountM (CountM m) = appEndo (execWriter m) (bpure mempty)
+{-# INLINE runCountM #-}

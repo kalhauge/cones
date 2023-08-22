@@ -21,14 +21,6 @@ import Conedec
 import qualified Data.Text as Text
 import Prelude hiding (all, any, product)
 
--- aeson
-import Data.Aeson (encode)
-
--- bytestring
-
-import Data.Aeson.Types (parse)
-import qualified Data.ByteString.Lazy.Char8 as BS
-
 data Contact
   = NoContact
   | Email Text.Text
@@ -52,7 +44,10 @@ instance Def "name" ValueCodec V1 Text.Text where unref = codecName
 instance Def "user" ValueCodec V1 User where unref = codecUser
 
 codecName :: Codec ValueCodec ctx Text.Text
-codecName = text <?> "Given and last name"
+codecName =
+  text
+    <?> "Given and last name"
+      <!> "Jasper Christopher"
 
 codecUser
   :: ( Def "name" ValueCodec ctx Text.Text
@@ -60,23 +55,29 @@ codecUser
      )
   => Codec ValueCodec ctx User
 codecUser =
-  object $ all do
-    #name <: ref @"name" <?> "The name of the user"
-    #age <: boundIntegral
-    #contact =: any do
-      given ifEmail ~ "email" <: text
-      given ifPhone ~ "phone" <: arrayAll do
-        at @0 <: boundIntegral
-        at @1 <: text
-      given ifNoContact
-        =: emptyObject
-        <?> "Leave empty for no contact"
-    #friends
-      <: manyOfList (ref @"user")
+  object
+    ( all do
+        #name <: ref @"name" <?> "The name of the user"
+        #age <: boundIntegral
+        #contact =: any do
+          given ifEmail ~ "email" <: text
+          given ifPhone ~ "phone" <: arrayAll do
+            at @0 <: boundIntegral
+            at @1 <: text
+          given ifNoContact
+            =: emptyObject
+            <?> "Leave empty for no contact"
+        #friends
+          <: manyOfList (ref @"user")
+    )
+    <?> "A user of the system"
+      <!> User
+        { name = "Jon Doe"
+        , age = 23
+        , contact = Email "jon@doe.com"
+        , friends = []
+        }
 
 main :: IO ()
 main = do
-  debugCodec @V1 codecUser
-  value <- toJSONViaCodec @V1 codecUser $ User "Peter" 20 (Phone 21 "23244123") [User "Marie" 23 NoContact []]
-  BS.putStrLn $ encode value
-  print $ parse (parseJSONViaCodec @V1 codecUser) value
+  debugCodec @V1 (ref @"user")
