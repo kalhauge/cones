@@ -1,10 +1,13 @@
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE EmptyCase #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE ViewPatterns #-}
 
 {- |
@@ -24,8 +27,11 @@ import Barbies.Access
 import Control.Monad
 import Data.Char
 import Data.Cone
+import Data.Data
 import Data.Functor.Const
 import Data.Functor.Contravariant
+import qualified Data.List as List
+import Data.Maybe (fromMaybe)
 import GHC.Generics
 import Language.Haskell.TH
 
@@ -239,22 +245,30 @@ correct cones and limits.
 makeDiagram :: Name -> Q [Dec]
 makeDiagram name = do
   let
-    getTypesCons :: Name -> Q ([Type], [Con])
+    getTypesCons :: Name -> Q (Name, [(Name, Type)], [Con])
     getTypesCons n = do
       TyConI c <- reify n
       case c of
-        DataD [] _ ts Nothing cons _ -> do
-          ts' <- mapM (varT . typeName) ts
-          pure (ts', cons)
+        DataD [] nm ts Nothing cons _ -> do
+          let tsn = map typeName ts
+          ts' <- mapM varT tsn
+          pure (nm, zip tsn ts', cons)
         TySynD _ [] (AppT (ConT a) b) -> do
-          (_ : ts, cons) <- getTypesCons a
-          pure (b : ts, cons)
+          (nm, (n', _) : ts, cons) <- getTypesCons a
+          pure (nm, (n', b) : ts, cons)
         a -> fail $ "makeDiagram currently does not support: " <> show a
 
-  (ts, cons) <- getTypesCons name
+  (nm, ts, cons) <- getTypesCons name
 
   --  makeDiagram currently does not support: TySynD Jvmhs.Data.Code.ByteCodeInst [] (AppT (ConT Language.JVM.ByteCode.ByteCodeInst) (ConT Language.JVM.Stage.High))
-  dsType <- mkType name ts
+  dsType <- mkType nm (map snd ts)
+  let
+    replaceDeep :: forall d. Data d => d -> d
+    replaceDeep t = case eqT of
+      Just (Refl :: d :~: Type) -> case t of
+        VarT x -> fromMaybe (VarT x) $ List.lookup x ts
+        _ -> gmapT replaceDeep t
+      _ -> gmapT replaceDeep t
   -- let theDiagramType = [t|Diagram $theType|]
   case cons of
     [] -> fail $ "makeDiagram currently does not support: " <> show name
@@ -262,7 +276,7 @@ makeDiagram name = do
       let dsConstructorName = mkName $ mkDiagramName (nameBase name)
       dsFieldNames <-
         sequence
-          [ pure (mkName . mkConname $ nameBase n, n, ts')
+          [ pure (mkName . mkConname $ nameBase n, n, replaceDeep ts')
           | -- _ -> fail $ "makeDiagram currently does not constructors of: " <> show con
           (n, _, ts') <- fs
           ]
@@ -281,8 +295,8 @@ makeDiagram name = do
         sequence
           [ case con of
             NormalC n ts' -> do
-              t <- tupleD (map snd ts')
-              pure (mkName . mkCoconname $ nameBase n, (n, map snd ts'), t)
+              t <- replaceDeep <$> tupleD (map snd ts')
+              pure (mkName . mkCoconname $ nameBase n, (n, map (replaceDeep . snd) ts'), replaceDeep t)
             _ -> fail $ "makeDiagram currently does not constructors of: " <> show con
           | con <- cons
           ]

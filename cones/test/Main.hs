@@ -19,6 +19,9 @@ data Contact
 data CornerCase f g h
   = NoCorners
 
+data CornerCase2 x
+  = NoCorners2 x
+
 data User = User
   { name :: String
   , age :: Int
@@ -26,7 +29,12 @@ data User = User
   }
 
 -- $(makeDiagram ''Maybe)
-$(makeDiagram ''CornerCase)
+
+-- $(makeDiagram ''CornerCase)
+
+type CornerCase3 = CornerCase2 Int
+$(makeDiagram ''CornerCase3)
+
 $(makeDiagram ''Contact)
 $(makeDiagram ''User)
 
