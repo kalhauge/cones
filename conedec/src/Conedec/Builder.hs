@@ -158,6 +158,9 @@ c <!> a =
     c
 infixl 6 <!>
 
+exact :: Aeson.Value -> Codec ValueCodec ctx ()
+exact = ElementCodec . ExactValueCodec
+
 ref :: forall s ctx e a. (KnownSymbol s, Def s e ctx a) => Codec e ctx a
 ref = ReferenceCodec (Ref @s)
 
@@ -168,7 +171,7 @@ text = ElementCodec StringCodec
 {-# INLINE text #-}
 
 null :: Codec ValueCodec ctx ()
-null = ElementCodec NullCodec
+null = exact Aeson.Null
 {-# INLINE null #-}
 
 scientific :: Codec ValueCodec ctx Scientific
@@ -198,6 +201,15 @@ manyOfList
   -> Codec ValueCodec ctx [a]
 manyOfList = bimap V.fromList V.toList . manyOf
 {-# INLINE manyOfList #-}
+
+broken :: Codec e ctx a
+broken = BrokenCodec
+
+simply :: Coercible a b => Codec e ctx a -> Codec e ctx b
+simply = bimap coerce coerce
+
+optional :: Codec ValueCodec ctx a -> Codec ValueCodec ctx (Maybe a)
+optional ca = SumCodec btraverse (MaybeD{ifNothing = null, ifJust = ca})
 
 class HasIgnore e where
   ignore :: Codec e ctx ()

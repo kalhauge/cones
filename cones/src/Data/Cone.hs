@@ -111,10 +111,28 @@ instance IndexedB (Diagram (Either a b)) where bindexed = EitherD (Const 0) (Con
 instance IxB (Diagram (Either a b)) 0 a where bix Index = ifLeft
 instance IxB (Diagram (Either a b)) 1 b where bix Index = ifRight
 
-instance LabeledB (Diagram (Either a b)) where blabeled = EitherD (Const "Left") (Const "Right")
+instance LabeledB (Diagram (Either a b)) where blabeled = EitherD (Const "ifLeft") (Const "ifRight")
 
-instance HasB (Diagram (Either a b)) "Left" a where bfrom Label = ifLeft
-instance HasB (Diagram (Either a b)) "Right" b where bfrom Label = ifRight
+instance HasB (Diagram (Either a b)) "ifLeft" a where bfrom Label = ifLeft
+instance HasB (Diagram (Either a b)) "ifRight" b where bfrom Label = ifRight
+
+-- | The diagram for the coproduct
+data instance Diagram (Maybe a) f = MaybeD
+  { ifNothing :: f ()
+  , ifJust :: f a
+  }
+  deriving stock (Generic)
+  deriving anyclass (FunctorB, ApplicativeB, TraversableB)
+
+instance IndexedB (Diagram (Maybe a)) where bindexed = MaybeD (Const 0) (Const 1)
+
+instance IxB (Diagram (Maybe a)) 0 () where bix Index = ifNothing
+instance IxB (Diagram (Maybe a)) 1 a where bix Index = ifJust
+
+instance LabeledB (Diagram (Maybe a)) where blabeled = MaybeD (Const "ifNothing") (Const "ifJust")
+
+instance HasB (Diagram (Maybe a)) "ifNothing" () where bfrom Label = ifNothing
+instance HasB (Diagram (Maybe a)) "ifJust" a where bfrom Label = ifJust
 
 -- | The diagram for the product
 data instance Diagram (a, b) f = Two (f a) (f b)
@@ -258,6 +276,12 @@ instance IsColimit (Either a b) where
   cofactor EitherD{..} = \case
     Left a -> getOp ifLeft a
     Right a -> getOp ifRight a
+
+instance IsColimit (Maybe a) where
+  cocone = MaybeD{ifNothing = Op (const Nothing), ifJust = Op Just}
+  cofactor MaybeD{..} = \case
+    Nothing -> getOp ifNothing ()
+    Just a -> getOp ifJust a
 
 {- | Use the colimit ability to extract an application of the functor
  @g@ on the colimit for each element in the diagram.

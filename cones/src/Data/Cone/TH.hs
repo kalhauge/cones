@@ -284,7 +284,7 @@ makeDiagram name = do
           , makeColimitFromSpec diagramSpec
           , makeLensesBForDiagram diagramSpec
           , makeIndexedFromSpec diagramSpec
-          , makeLabeledFromSpec (fmap fst diagramSpec)
+          , makeLabeledFromSpec (fmap (mkName . mkCoconname . nameBase . fst) diagramSpec)
           ]
  where
   mkDiagramName idt = idt <> "D"

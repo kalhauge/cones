@@ -3,6 +3,7 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -73,6 +74,8 @@ import Data.Scientific hiding (scientific)
 import Control.Monad.Writer
 import qualified Data.Aeson.KeyMap as Aeson
 import Data.Proxy
+import Data.String
+import qualified Data.Text.Lazy.Encoding as Text
 import GHC.TypeLits
 import qualified Prettyprinter as PP
 import qualified Prettyprinter.Render.Text as PP
@@ -131,13 +134,13 @@ data Codec e ctx a where
     -> Codec e ctx a
 
 data ValueCodec ctx a where
-  NullCodec :: ValueCodec ctx ()
   StringCodec :: ValueCodec ctx Text.Text
   BoolCodec :: ValueCodec ctx Bool
   NumberCodec :: ValueCodec ctx Scientific
   ManyOfCodec :: Codec ValueCodec ctx a -> ValueCodec ctx (V.Vector a)
   ArrayCodec :: Codec ArrayCodec ctx a -> ValueCodec ctx a
   ObjectCodec :: Codec ObjectCodec ctx a -> ValueCodec ctx a
+  ExactValueCodec :: Value -> ValueCodec ctx ()
 
 data ObjectCodec ctx a where
   EmptyObjectCodec :: ObjectCodec ctx ()
@@ -216,8 +219,6 @@ toJSONViaCodec c a = do
  where
   toJSONViaValueCodec :: ValueCodec ctx t -> t -> m Value
   toJSONViaValueCodec = \case
-    NullCodec -> \() ->
-      pure Aeson.Null
     StringCodec ->
       pure . Aeson.String
     BoolCodec ->
@@ -230,6 +231,8 @@ toJSONViaCodec c a = do
       fmap Aeson.Array . V.mapM (toJSONViaCodec oc)
     ArrayCodec oc ->
       fmap Aeson.Array . destroy toJSONViaArrayCodec oc
+    ExactValueCodec e ->
+      const $ pure e
 
   toJSONViaObjectCodec :: ObjectCodec ctx t -> t -> m [Pair]
   toJSONViaObjectCodec = \case
@@ -251,9 +254,6 @@ parseJSONViaCodec c =
  where
   parseJSONViaValueCodec :: forall t. ValueCodec ctx t -> ReaderT Value Parser t
   parseJSONViaValueCodec cd = ReaderT $ case cd of
-    NullCodec -> \case
-      Null -> pure ()
-      a -> typeMismatch "Null" a
     NumberCodec -> \case
       Number s -> pure s
       a -> typeMismatch "Number" a
@@ -270,6 +270,9 @@ parseJSONViaCodec c =
       runArrayParser "no-name" (build parseJSONViaArrayCodec ca)
     ObjectCodec ca ->
       runObjectParser "no-name" (build parseJSONViaObjectCodec ca)
+    ExactValueCodec expected -> \actual ->
+      unless (expected == actual) do
+        fail $ "expected " ++ show expected ++ ", but encountered " ++ show actual
 
   parseJSONViaObjectCodec :: ObjectCodec ctx t -> ObjectParser t
   parseJSONViaObjectCodec = \case
@@ -315,6 +318,9 @@ runArrayParser n (ArrayParser f) = withArray n \arr ->
 Here:
 -}
 
+instance IsString (Codec ValueCodec ctx ()) where
+  fromString = ElementCodec . ExactValueCodec . fromString
+
 newtype PrettyM a = PrettyM {runPrettyM :: ReaderT (Aeson.KeyMap ()) (Writer [(Key, Pretty)]) a}
   deriving newtype (Functor, Applicative, Monad, MonadWriter [(Key, Pretty)], MonadReader (Aeson.KeyMap ()))
 
@@ -346,7 +352,7 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
                 pure ["+ " <> PP.nest 2 res]
             )
             diag
-      pure $ PP.vcat res
+      pure $ PP.line <> PP.vcat res
     ProductCodec order diag -> do
       res <-
         getAp $
@@ -357,7 +363,7 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
                 pure ["* " <> PP.nest 2 res]
             )
             diag
-      pure $ PP.vcat res
+      pure $ PP.line <> PP.vcat res
     ReferenceCodec (Ref :: Ref s) -> do
       let n = symbolVal (Proxy :: Proxy s)
       let k = Aeson.fromString n
@@ -383,8 +389,6 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
       pure "<string>"
     NumberCodec ->
       pure "<number>"
-    NullCodec ->
-      pure "null"
     BoolCodec ->
       pure "<bool>"
     ManyOfCodec a -> do
@@ -392,10 +396,12 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
       pure $ "manyOf" PP.<+> res
     ArrayCodec a -> do
       res <- prettyViaCodec prettyViaArrayCodec a
-      pure $ "array" PP.<> PP.line PP.<> res
+      pure $ "array" PP.<> res
     ObjectCodec a -> do
       res <- prettyViaCodec prettyViaObjectCodec a
-      pure $ "object" PP.<> PP.line PP.<> res
+      pure $ "object" PP.<> res
+    ExactValueCodec e ->
+      pure (PP.pretty . Text.decodeUtf8 $ Aeson.encode e)
 
   prettyViaObjectCodec :: forall t. ObjectCodec ctx t -> Pretty
   prettyViaObjectCodec = \case
