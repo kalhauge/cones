@@ -17,6 +17,7 @@ A module for generating diagrams, cones, and limits.
 -}
 module Data.Cone.TH (
   makeDiagram,
+  makeDiagramLite,
   module Barbies,
 ) where
 
@@ -67,8 +68,8 @@ makeDiagramFromSpec DiagramSpec{..} =
 
 makeIndexedFromSpec :: DiagramSpec a -> Q [Dec]
 makeIndexedFromSpec DiagramSpec{..} = do
-  indexedB <-
-    instanceD
+  pure
+    <$> instanceD
       (pure [])
       [t|IndexedB (Diagram $(pure dsType))|]
       [ valD
@@ -81,22 +82,22 @@ makeIndexedFromSpec DiagramSpec{..} = do
           )
           []
       ]
-  ixBs <-
-    sequence
-      [ instanceD
-        (pure [])
-        [t|IxB (Diagram $(pure dsType)) $(litT (numTyLit i)) $(pure t)|]
-        [funD 'bix [clause [[p|Index|]] (normalB $ varE n) []]]
-      | (i, (n, _, t)) <-
-          zip [0 ..] dsFieldNames
-      ]
 
-  pure (indexedB : ixBs)
+makeIxBFromSpec :: DiagramSpec a -> Q [Dec]
+makeIxBFromSpec DiagramSpec{..} =
+  sequence
+    [ instanceD
+      (pure [])
+      [t|IxB (Diagram $(pure dsType)) $(litT (numTyLit i)) $(pure t)|]
+      [funD 'bix [clause [[p|Index|]] (normalB $ varE n) []]]
+    | (i, (n, _, t)) <-
+        zip [0 ..] dsFieldNames
+    ]
 
 makeLabeledFromSpec :: DiagramSpec Name -> Q [Dec]
-makeLabeledFromSpec DiagramSpec{..} = do
-  indexedB <-
-    instanceD
+makeLabeledFromSpec DiagramSpec{..} =
+  pure
+    <$> instanceD
       (pure [])
       [t|LabeledB (Diagram $(pure dsType))|]
       [ valD
@@ -109,16 +110,15 @@ makeLabeledFromSpec DiagramSpec{..} = do
           )
           []
       ]
-  ixBs <-
-    sequence
-      [ instanceD
-        (pure [])
-        [t|HasB (Diagram $(pure dsType)) $(litT (strTyLit (nameBase cn))) $(pure t)|]
-        [funD 'bfrom [clause [[p|Label|]] (normalB $ varE n) []]]
-      | (n, cn, t) <- dsFieldNames
-      ]
-
-  pure (indexedB : ixBs)
+makeHasBFromSpec :: DiagramSpec Name -> Q [Dec]
+makeHasBFromSpec DiagramSpec{..} =
+  sequence
+    [ instanceD
+      (pure [])
+      [t|HasB (Diagram $(pure dsType)) $(litT (strTyLit (nameBase cn))) $(pure t)|]
+      [funD 'bfrom [clause [[p|Label|]] (normalB $ varE n) []]]
+    | (n, cn, t) <- dsFieldNames
+    ]
 
 makeLimitFromSpec :: Name -> DiagramSpec Name -> Q [Dec]
 makeLimitFromSpec cn DiagramSpec{..} =
@@ -239,11 +239,12 @@ makeLensesBForDiagram DiagramSpec{..} =
           []
       ]
 
-{- | Given a name of an ADT, we can generate a corresponding 'Diagram' with
-correct cones and limits.
--}
-makeDiagram :: Name -> Q [Dec]
-makeDiagram name = do
+data LimitedDiagram
+  = LimitDiagram Name (DiagramSpec Name)
+  | ColimitDiagram (DiagramSpec (Name, [Type]))
+
+getDiagramSpec :: Name -> Q LimitedDiagram
+getDiagramSpec name = do
   let
     getTypesCons :: Name -> Q (Name, [(Name, Type)], [Con])
     getTypesCons n = do
@@ -280,15 +281,7 @@ makeDiagram name = do
           | -- _ -> fail $ "makeDiagram currently does not constructors of: " <> show con
           (n, _, ts') <- fs
           ]
-      let diagramSpec = DiagramSpec{..}
-      concat
-        <$> sequence
-          [ makeDiagramFromSpec diagramSpec
-          , makeLimitFromSpec cn diagramSpec
-          , makeLensesBForDiagram diagramSpec
-          , makeIndexedFromSpec diagramSpec
-          , makeLabeledFromSpec diagramSpec
-          ]
+      pure $ LimitDiagram cn DiagramSpec{..}
     _ -> do
       let dsConstructorName = mkName $ mkDiagramName (nameBase name)
       dsFieldNames <-
@@ -300,15 +293,7 @@ makeDiagram name = do
             _ -> fail $ "makeDiagram currently does not constructors of: " <> show con
           | con <- cons
           ]
-      let diagramSpec = DiagramSpec{..}
-      concat
-        <$> sequence
-          [ makeDiagramFromSpec diagramSpec
-          , makeColimitFromSpec diagramSpec
-          , makeLensesBForDiagram diagramSpec
-          , makeIndexedFromSpec diagramSpec
-          , makeLabeledFromSpec (fmap (mkName . mkCoconname . nameBase . fst) diagramSpec)
-          ]
+      pure $ ColimitDiagram DiagramSpec{..}
  where
   mkDiagramName idt = idt <> "D"
   mkCoconname idt = "if" <> idt
@@ -319,6 +304,61 @@ makeDiagram name = do
     [] -> [t|()|]
     [t] -> pure t
     ts -> mkTupleT (map pure ts)
+
+{- | Given a name of an ADT, we can generate a corresponding 'Diagram' with
+correct cones and limits.
+-}
+makeDiagram :: Name -> Q [Dec]
+makeDiagram n =
+  getDiagramSpec n >>= \case
+    LimitDiagram cn diagramSpec ->
+      concat
+        <$> sequence
+          [ makeDiagramFromSpec diagramSpec
+          , makeLimitFromSpec cn diagramSpec
+          , makeLensesBForDiagram diagramSpec
+          , makeIndexedFromSpec diagramSpec
+          , makeLabeledFromSpec diagramSpec
+          , makeHasBFromSpec diagramSpec
+          , makeIxBFromSpec diagramSpec
+          ]
+    ColimitDiagram diagramSpec ->
+      concat
+        <$> sequence
+          [ makeDiagramFromSpec diagramSpec
+          , makeColimitFromSpec diagramSpec
+          , makeLensesBForDiagram diagramSpec
+          , makeIndexedFromSpec diagramSpec
+          , makeLabeledFromSpec (fmap (mkName . mkCoconname . nameBase . fst) diagramSpec)
+          , makeHasBFromSpec (fmap (mkName . mkCoconname . nameBase . fst) diagramSpec)
+          , makeIxBFromSpec diagramSpec
+          ]
+ where
+  mkCoconname idt = "if" <> idt
+
+makeDiagramLite :: Name -> Q [Dec]
+makeDiagramLite n =
+  getDiagramSpec n >>= \case
+    LimitDiagram cn diagramSpec ->
+      concat
+        <$> sequence
+          [ makeDiagramFromSpec diagramSpec
+          , makeLimitFromSpec cn diagramSpec
+          , makeLensesBForDiagram diagramSpec
+          , makeIndexedFromSpec diagramSpec
+          , makeLabeledFromSpec diagramSpec
+          ]
+    ColimitDiagram diagramSpec ->
+      concat
+        <$> sequence
+          [ makeDiagramFromSpec diagramSpec
+          , makeColimitFromSpec diagramSpec
+          , makeLensesBForDiagram diagramSpec
+          , makeIndexedFromSpec diagramSpec
+          , makeLabeledFromSpec (fmap (mkName . mkCoconname . nameBase . fst) diagramSpec)
+          ]
+ where
+  mkCoconname idt = "if" <> idt
 
 covbType :: Quote m => Name -> m Type -> m VarBangType
 covbType n = varBangType n . bangType (bang noSourceUnpackedness noSourceStrictness)
