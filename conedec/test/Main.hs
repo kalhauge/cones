@@ -64,6 +64,19 @@ codecName =
     <?> "Given and last name"
       <!> "Jasper Christopher"
 
+codecContact2
+  :: Codec ValueCodec ctx Contact
+codecContact2 = object $ tagged "type" $ do
+  #ifEmail =: "email" // do
+    "email" ~: text
+  #ifPhone =: "phone" // all do
+    at @0 ~ "contry" <: boundIntegral
+    at @1 ~ "phone" <: text
+  #ifNoContact
+    =: "no-contact"
+    // emptyObject
+    <?> "Leave empty for no contact"
+
 codecUser
   :: ( Def "name" ValueCodec ctx Text.Text
      , Def "user" ValueCodec ctx User
@@ -77,11 +90,11 @@ codecUser =
         #age <: boundIntegral
         #favoriteColor <: optional (ref @"color")
         #contact =: any do
-          given ifEmail ~ "email" <: text
-          given ifPhone ~ "phone" <: arrayAll do
+          #ifEmail ~ "email" <: text
+          #ifPhone ~ "phone" <: arrayAll do
             at @0 <: boundIntegral
             at @1 <: text
-          given ifNoContact
+          #ifNoContact
             =: emptyObject
             <?> "Leave empty for no contact"
         #friends
@@ -98,4 +111,4 @@ codecUser =
 
 main :: IO ()
 main = do
-  debugCodec @V1 (ref @"user")
+  debugCodec @V1 codecContact2

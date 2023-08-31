@@ -12,6 +12,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -83,13 +84,14 @@ all
   => (forall m. CodecSpecMonad t e ctx m => m ())
   -> Codec e ctx t
 all o = annotateMistakes o $ ProductCodec (runOrderM o) (runCodecM o)
+{-# INLINE all #-}
 
 annotateMistakes
   :: ( TraversableB (Diagram t)
      , ApplicativeB (Diagram t)
      , LabeledB (Diagram t)
      )
-  => (forall m. CodecSpecMonad t e ctx m => m ())
+  => (forall m. CodecSpecMonad t e' ctx m => m ())
   -> Codec e ctx a
   -> Codec e ctx a
 annotateMistakes o c' = fixMistakes c' mistakes
@@ -102,7 +104,7 @@ annotateMistakes o c' = fixMistakes c' mistakes
         ( c <?> ("warning: " <> fromString k <> " set " <> fromString (show v) <> " times")
         )
         ks
-{-# INLINE all #-}
+{-# INLINE annotateMistakes #-}
 
 dimap
   :: (b -> Either String a)
@@ -119,6 +121,40 @@ bimap
   -> Codec e ctx b
 bimap fa fb = dimap (pure . fa) (pure . fb)
 {-# INLINE bimap #-}
+
+data TaggedObjectCodec ctx t where
+  Tagged :: Aeson.Value -> Codec ObjectCodec ctx t -> TaggedObjectCodec ctx t
+
+tagged
+  :: forall t ctx
+   . (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
+  => Aeson.Key
+  -> (forall m. CodecSpecMonad t TaggedObjectCodec ctx m => m ())
+  -> Codec ObjectCodec ctx t
+tagged tagfield o =
+  annotateMistakes o $
+    let
+      codec' :: Diagram t (Codec TaggedObjectCodec ctx)
+      codec' = runCodecM o
+
+      xcodec :: Diagram t (Codec ObjectCodec ctx)
+      xcodec =
+        bmap
+          ( cunfold
+              ( \(Tagged tag c) ->
+                  let t = Two (ElementCodec $ FieldCodec tagfield (exact tag)) c
+                   in bimap ((),) snd . ProductCodec btraverse $ t
+              )
+          )
+          codec'
+     in
+      SumCodec (runOrderM o) xcodec
+
+(//) :: Aeson.Value -> Codec ObjectCodec ctx t -> Codec TaggedObjectCodec ctx t
+(//) k v = ElementCodec $ Tagged k v
+
+(~:) :: Aeson.Key -> Codec ValueCodec ctx t -> Codec ObjectCodec ctx t
+(~:) k v = ElementCodec $ FieldCodec k v
 
 arrayAll
   :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
@@ -162,7 +198,7 @@ exact :: Aeson.Value -> Codec ValueCodec ctx ()
 exact = ElementCodec . ExactValueCodec
 
 ref :: forall s ctx e a. (KnownSymbol s, Def s e ctx a) => Codec e ctx a
-ref = ReferenceCodec (Ref @s)
+ref = ReferenceCodec (Ref @s) id
 
 -- \$values
 

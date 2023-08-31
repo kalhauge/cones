@@ -21,6 +21,7 @@ module Conedec.Codec (
   Ref (..),
   Def (..),
   Doc,
+  cunfold,
   destroy,
   build,
   ValueCodec (..),
@@ -116,8 +117,9 @@ data Codec e ctx a where
   -- | The reference codec.
   -- The trick here is to ensure that there exist only one Codec per context and name.
   ReferenceCodec
-    :: (Def s e ctx a)
+    :: (Def s e' ctx a)
     => Ref s
+    -> (Codec e' ctx a -> Codec e ctx a)
     -> Codec e ctx a
   ElementCodec
     :: e ctx a
@@ -132,6 +134,25 @@ data Codec e ctx a where
     -> (a -> Doc)
     -> Codec e ctx a
     -> Codec e ctx a
+
+cunfold :: (forall b. e ctx b -> Codec e' ctx b) -> Codec e ctx a -> Codec e' ctx a
+cunfold fn = \case
+  BrokenCodec -> BrokenCodec
+  SumCodec order diag ->
+    SumCodec order (bmap (cunfold fn) diag)
+  ProductCodec order diag ->
+    ProductCodec
+      order
+      (bmap (cunfold fn) diag)
+  DimapCodec to from c ->
+    DimapCodec to from (cunfold fn c)
+  ReferenceCodec r f ->
+    ReferenceCodec r (cunfold fn . f)
+  ElementCodec c -> fn c
+  DocumentationCodec doc c ->
+    DocumentationCodec doc (cunfold fn c)
+  ExampleCodec e tdoc c ->
+    ExampleCodec e tdoc (cunfold fn c)
 
 data ValueCodec ctx a where
   StringCodec :: ValueCodec ctx Text.Text
@@ -165,8 +186,8 @@ destroy fn = \case
     getAp . foldOfLimit order (\c -> Ap . destroy fn c) diag
   DimapCodec to _ c ->
     either fail pure . to >=> destroy fn c
-  ReferenceCodec (Ref :: Ref s) ->
-    destroy fn (unref @s @e @ctx)
+  ReferenceCodec (Ref :: Ref s) f ->
+    destroy fn (f (unref @s))
   ElementCodec c ->
     fn c
   DocumentationCodec _ c ->
@@ -184,8 +205,8 @@ build fn = \case
     apOfLimit order . bmap (build fn) $ diag
   DimapCodec _ from c ->
     build fn c >>= either fail pure . from
-  ReferenceCodec (Ref :: Ref s) ->
-    build fn (unref @s @e @ctx)
+  ReferenceCodec (Ref :: Ref s) f ->
+    build fn (f (unref @s))
   ElementCodec c ->
     fn c
   DocumentationCodec _ c ->
@@ -364,10 +385,10 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
             )
             diag
       pure $ PP.line <> PP.vcat res
-    ReferenceCodec (Ref :: Ref s) -> do
+    ReferenceCodec (Ref :: Ref s) f -> do
       let n = symbolVal (Proxy :: Proxy s)
       let k = Aeson.fromString n
-      let ca = unref @s
+      let ca = f (unref @s)
       alreadyMember <- asks (Aeson.member k)
       unless alreadyMember do
         tell [(k, prettyViaCodec fn ca)]
