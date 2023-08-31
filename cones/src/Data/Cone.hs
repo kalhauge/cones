@@ -12,6 +12,9 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+
+{-# HLINT ignore "Avoid lambda" #-}
 
 {- |
 Module: Data.Cone
@@ -181,6 +184,30 @@ instance LensesB (Diagram (a, b)) where
       (ALensB \fn (Two a b) -> (`Two` b) <$> fn a)
       (ALensB \fn (Two a b) -> Two a <$> fn b)
 
+-- | The diagram for the product
+data instance Diagram (a, b, c) f = Three (f a) (f b) (f c)
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (FunctorB, ApplicativeB, TraversableB)
+
+instance IndexedB (Diagram (a, b, c)) where bindexed = Three (Const 0) (Const 1) (Const 2)
+
+instance IxB (Diagram (a, b, c)) 0 a where bix Index (Three a _ _) = a
+instance IxB (Diagram (a, b, c)) 1 b where bix Index (Three _ b _) = b
+instance IxB (Diagram (a, b, c)) 2 c where bix Index (Three _ _ c) = c
+
+instance LabeledB (Diagram (a, b, c)) where blabeled = Three (Const "fst") (Const "snd") (Const "trd")
+
+instance HasB (Diagram (a, b, c)) "fst" a where bfrom Label (Three a _ _) = a
+instance HasB (Diagram (a, b, c)) "snd" b where bfrom Label (Three _ b _) = b
+instance HasB (Diagram (a, b, c)) "trd" c where bfrom Label (Three _ _ c) = c
+
+instance LensesB (Diagram (a, b, c)) where
+  blenses =
+    Three
+      (ALensB \fn (Three a b c) -> (\x -> Three x b c) <$> fn a)
+      (ALensB \fn (Three a b c) -> (\x -> Three a x c) <$> fn b)
+      (ALensB \fn (Three a b c) -> (\x -> Three a b x) <$> fn c)
+
 -- -- | The diagram for the 3 tuple
 -- newtype instance Diagram (a, b, c) f = Three (f a, f b, f c)
 --   deriving stock (Show, Eq, Generic)
@@ -223,6 +250,15 @@ instance IsLimit (a, b) where
     Two
       (\(Two fst' _) -> fst' ())
       (\(Two _ snd') -> snd' ())
+
+instance IsLimit (a, b, c) where
+  cone = Three (\(a, _, _) -> a) (\(_, b, _) -> b) (\(_, _, c) -> c)
+  factor (Three fst' snd' trd') b = (fst' b, snd' b, trd' b)
+  coneCone =
+    Three
+      (\(Three fst' _ _) -> fst' ())
+      (\(Three _ snd' _) -> snd' ())
+      (\(Three _ _ trd') -> trd' ())
 
 -- coneCone :: IsLimit a => Cone a (Cone a ())
 -- coneCone = cone
