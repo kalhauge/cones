@@ -98,23 +98,25 @@ use cases.
 -}
 data family Diagram t :: (Type -> Type) -> Type
 
--- | The diagram for the coproduct
-data instance Diagram (Either a b) f = EitherD
-  { ifLeft :: f a
-  , ifRight :: f b
+data instance Diagram Bool f = BoolD
+  { ifFalse :: f ()
+  , ifTrue :: f ()
   }
-  deriving stock (Show, Eq, Generic)
+  deriving stock (Generic)
   deriving anyclass (FunctorB, ApplicativeB, TraversableB)
 
-instance IndexedB (Diagram (Either a b)) where bindexed = EitherD (Const 0) (Const 1)
+instance IndexedB (Diagram Bool) where bindexed = BoolD (Const 0) (Const 1)
 
-instance IxB (Diagram (Either a b)) 0 a where bix Index = ifLeft
-instance IxB (Diagram (Either a b)) 1 b where bix Index = ifRight
+instance IxB (Diagram Bool) 0 () where bix Index = ifFalse
+instance IxB (Diagram Bool) 1 () where bix Index = ifTrue
 
-instance LabeledB (Diagram (Either a b)) where blabeled = EitherD (Const "ifLeft") (Const "ifRight")
+instance LabeledB (Diagram Bool) where blabeled = BoolD (Const "ifFalse") (Const "ifTrue")
 
-instance HasB (Diagram (Either a b)) "ifLeft" a where bfrom Label = ifLeft
-instance HasB (Diagram (Either a b)) "ifRight" b where bfrom Label = ifRight
+instance HasB (Diagram Bool) "ifFalse" () where bfrom Label = ifFalse
+instance HasB (Diagram Bool) "ifTrue" () where bfrom Label = ifTrue
+
+instance LensesB (Diagram Bool) where
+  blenses = BoolD (ALensB \fn (BoolD a b) -> (`BoolD` b) <$> fn a) (ALensB \fn (BoolD a b) -> BoolD a <$> fn b)
 
 -- | The diagram for the coproduct
 data instance Diagram (Maybe a) f = MaybeD
@@ -133,6 +135,30 @@ instance LabeledB (Diagram (Maybe a)) where blabeled = MaybeD (Const "ifNothing"
 
 instance HasB (Diagram (Maybe a)) "ifNothing" () where bfrom Label = ifNothing
 instance HasB (Diagram (Maybe a)) "ifJust" a where bfrom Label = ifJust
+
+instance LensesB (Diagram (Maybe a)) where
+  blenses = MaybeD (ALensB \fn (MaybeD a b) -> (`MaybeD` b) <$> fn a) (ALensB \fn (MaybeD a b) -> MaybeD a <$> fn b)
+
+-- | The diagram for the coproduct
+data instance Diagram (Either a b) f = EitherD
+  { ifLeft :: f a
+  , ifRight :: f b
+  }
+  deriving stock (Show, Eq, Generic)
+  deriving anyclass (FunctorB, ApplicativeB, TraversableB)
+
+instance IndexedB (Diagram (Either a b)) where bindexed = EitherD (Const 0) (Const 1)
+
+instance IxB (Diagram (Either a b)) 0 a where bix Index = ifLeft
+instance IxB (Diagram (Either a b)) 1 b where bix Index = ifRight
+
+instance LabeledB (Diagram (Either a b)) where blabeled = EitherD (Const "ifLeft") (Const "ifRight")
+
+instance HasB (Diagram (Either a b)) "ifLeft" a where bfrom Label = ifLeft
+instance HasB (Diagram (Either a b)) "ifRight" b where bfrom Label = ifRight
+
+instance LensesB (Diagram (Either a b)) where
+  blenses = EitherD (ALensB \fn (EitherD a b) -> (`EitherD` b) <$> fn a) (ALensB \fn (EitherD a b) -> EitherD a <$> fn b)
 
 -- | The diagram for the product
 data instance Diagram (a, b) f = Two (f a) (f b)
@@ -282,6 +308,12 @@ instance IsColimit (Maybe a) where
   cofactor MaybeD{..} = \case
     Nothing -> getOp ifNothing ()
     Just a -> getOp ifJust a
+
+instance IsColimit Bool where
+  cocone = BoolD{ifFalse = Op (const False), ifTrue = Op (const True)}
+  cofactor BoolD{..} = \case
+    True -> getOp ifTrue ()
+    False -> getOp ifFalse ()
 
 {- | Use the colimit ability to extract an application of the functor
  @g@ on the colimit for each element in the diagram.

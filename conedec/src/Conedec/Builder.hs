@@ -10,6 +10,7 @@
 {-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
@@ -125,6 +126,9 @@ bimap fa fb = dimap (pure . fa) (pure . fb)
 data TaggedObjectCodec ctx t where
   Tagged :: Aeson.Value -> Codec ObjectCodec ctx t -> TaggedObjectCodec ctx t
 
+untup :: Codec e ctx ((), b) -> Codec e ctx b
+untup = bimap ((),) snd
+
 tagged
   :: forall t ctx
    . (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
@@ -143,7 +147,7 @@ tagged tagfield o =
           ( cunfold
               ( \(Tagged tag c) ->
                   let t = Two (ElementCodec $ FieldCodec tagfield (exact tag)) c
-                   in bimap ((),) snd . ProductCodec btraverse $ t
+                   in untup . ProductCodec btraverse $ t
               )
           )
           codec'
