@@ -149,8 +149,8 @@ cunfold fn = \case
   ReferenceCodec r f ->
     ReferenceCodec r (cunfold fn . f)
   ElementCodec c -> fn c
-  DocumentationCodec doc c ->
-    DocumentationCodec doc (cunfold fn c)
+  DocumentationCodec dc c ->
+    DocumentationCodec dc (cunfold fn c)
   ExampleCodec e tdoc c ->
     ExampleCodec e tdoc (cunfold fn c)
 
@@ -354,7 +354,26 @@ instance MonadFail WithError where
 withError :: (String -> a) -> WithError a -> a
 withError hdl = either hdl id . runWithError
 
-type Pretty = PrettyM (PP.Doc Void)
+type Pretty = PrettyM SmartDoc
+
+data SmartDoc
+  = Doc (PP.Doc Void)
+  | AnyDoc [PP.Doc Void]
+  | AllDoc [PP.Doc Void]
+
+instance IsString SmartDoc where
+  fromString = Doc . fromString
+
+renderSmartDoc :: SmartDoc -> PP.Doc Void
+renderSmartDoc = \case
+  Doc d -> d
+  AnyDoc ds ->
+    PP.vcat ["+ " <> PP.nest 2 d | d <- ds]
+  AllDoc ds ->
+    PP.vcat ["* " <> PP.nest 2 d | d <- ds]
+
+doc :: PP.Doc Void -> PrettyM SmartDoc
+doc = pure . Doc
 
 prettyCodec :: forall ctx a. Codec ValueCodec ctx a -> Pretty
 prettyCodec = prettyViaCodec prettyViaValueCodec
@@ -370,10 +389,12 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
             order
             ( \a -> Ap do
                 res <- prettyViaCodec fn a
-                pure ["+ " <> PP.nest 2 res]
+                pure case res of
+                  AnyDoc ds -> ds
+                  x -> [renderSmartDoc x]
             )
             diag
-      pure $ PP.line <> PP.vcat res
+      pure $ AnyDoc res
     ProductCodec order diag -> do
       res <-
         getAp $
@@ -381,10 +402,12 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
             order
             ( \a -> Ap do
                 res <- prettyViaCodec fn a
-                pure ["* " <> PP.nest 2 res]
+                pure case res of
+                  AllDoc ds -> ds
+                  x -> [renderSmartDoc x]
             )
             diag
-      pure $ PP.line <> PP.vcat res
+      pure $ AllDoc res
     ReferenceCodec (Ref :: Ref s) f -> do
       let n = symbolVal (Proxy :: Proxy s)
       let k = Aeson.fromString n
@@ -392,17 +415,17 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
       alreadyMember <- asks (Aeson.member k)
       unless alreadyMember do
         tell [(k, prettyViaCodec fn ca)]
-      pure $ "<" <> PP.pretty n <> ">"
+      pure . Doc $ "<" <> PP.pretty n <> ">"
     DimapCodec _ _ c ->
       prettyViaCodec fn c
     ElementCodec c ->
       fn c
     DocumentationCodec s c -> do
       res <- prettyViaCodec fn c
-      pure $ res <> PP.line <> "-- " <> s
+      pure . Doc $ renderSmartDoc res <> PP.line <> "-- " <> s
     ExampleCodec a f c -> do
       res <- prettyViaCodec fn c
-      pure $ res <> PP.line <> "! " <> f a
+      pure . Doc $ renderSmartDoc res <> PP.line <> "! " <> f a
 
   prettyViaValueCodec :: forall t. ValueCodec ctx t -> Pretty
   prettyViaValueCodec = \case
@@ -414,22 +437,22 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
       pure "<bool>"
     ManyOfCodec a -> do
       res <- prettyViaCodec prettyViaValueCodec a
-      pure $ "manyOf" PP.<+> res
+      doc $ "manyOf" PP.<+> renderSmartDoc res
     ArrayCodec a -> do
       res <- prettyViaCodec prettyViaArrayCodec a
-      pure $ "array" PP.<> res
+      doc $ "array" PP.<> PP.line PP.<> renderSmartDoc res
     ObjectCodec a -> do
       res <- prettyViaCodec prettyViaObjectCodec a
-      pure $ "object" PP.<> res
+      doc $ "object" PP.<> PP.line PP.<> renderSmartDoc res
     ExactValueCodec e ->
-      pure (PP.pretty . Text.decodeUtf8 $ Aeson.encode e)
+      doc $ PP.pretty . Text.decodeUtf8 $ Aeson.encode e
 
   prettyViaObjectCodec :: forall t. ObjectCodec ctx t -> Pretty
   prettyViaObjectCodec = \case
     EmptyObjectCodec -> pure "<empty>"
     FieldCodec k cd -> do
       res <- prettyViaCodec prettyViaValueCodec cd
-      pure $ PP.hsep [PP.pretty (Aeson.toString k), ":", res]
+      doc $ PP.hsep [PP.pretty (Aeson.toString k), ":", renderSmartDoc res]
 
   prettyViaArrayCodec :: forall t. ArrayCodec ctx t -> Pretty
   prettyViaArrayCodec = \case
@@ -441,7 +464,7 @@ debugCodec :: Codec ValueCodec ctx a -> IO ()
 debugCodec c = do
   putStrLn "------"
   let (res, deps) = runWriter $ runReaderT (runPrettyM $ prettyCodec c) Aeson.empty
-  PP.putDoc (res <> PP.line)
+  PP.putDoc (renderSmartDoc res <> PP.line)
   putStrLn "------"
   go (Aeson.fromList $ map (\(a, _) -> (a, ())) deps) deps
   putStrLn "------"
@@ -450,5 +473,5 @@ debugCodec c = do
     [] -> pure ()
     (k, v) : xs -> do
       let (res, deps) = runWriter $ runReaderT (runPrettyM v) keys
-      PP.putDoc $ "<" <> PP.pretty (Aeson.toText k) <> ">" <> " ::= " <> PP.nest 2 res <> PP.line
+      PP.putDoc $ "<" <> PP.pretty (Aeson.toText k) <> ">" <> " ::= " <> PP.nest 2 (renderSmartDoc res) <> PP.line
       go (keys <> Aeson.fromList (map (\(a, _) -> (a, ())) deps)) (deps <> xs)
