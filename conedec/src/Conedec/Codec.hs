@@ -159,6 +159,7 @@ data ValueCodec ctx a where
   BoolCodec :: ValueCodec ctx Bool
   NumberCodec :: ValueCodec ctx Scientific
   ManyOfCodec :: Codec ValueCodec ctx a -> ValueCodec ctx (V.Vector a)
+  MapOfCodec :: Codec ValueCodec ctx a -> ValueCodec ctx [(Key, a)]
   ArrayCodec :: Codec ArrayCodec ctx a -> ValueCodec ctx a
   ObjectCodec :: Codec ObjectCodec ctx a -> ValueCodec ctx a
   ExactValueCodec :: Value -> ValueCodec ctx ()
@@ -250,6 +251,8 @@ toJSONViaCodec c a = do
       fmap Aeson.object . destroy toJSONViaObjectCodec oc
     ManyOfCodec oc ->
       fmap Aeson.Array . V.mapM (toJSONViaCodec oc)
+    MapOfCodec oc ->
+      fmap (Aeson.Object . Aeson.fromList) . mapM (\(key, x) -> (key,) <$> toJSONViaCodec oc x)
     ArrayCodec oc ->
       fmap Aeson.Array . destroy toJSONViaArrayCodec oc
     ExactValueCodec e ->
@@ -287,6 +290,9 @@ parseJSONViaCodec c =
     ManyOfCodec ca -> \case
       Array arr -> V.mapM (runReaderT $ build parseJSONViaValueCodec ca) arr
       v -> typeMismatch "Array" v
+    MapOfCodec ca -> \case
+      Object mp -> mapM (\(k, v) -> (k,) <$> runReaderT (build parseJSONViaValueCodec ca) v) $ Aeson.toList mp
+      v -> typeMismatch "Object" v
     ArrayCodec ca ->
       runArrayParser "no-name" (build parseJSONViaArrayCodec ca)
     ObjectCodec ca ->
@@ -438,6 +444,9 @@ prettyCodec = prettyViaCodec prettyViaValueCodec
     ManyOfCodec a -> do
       res <- prettyViaCodec prettyViaValueCodec a
       doc $ "manyOf" PP.<+> renderSmartDoc res
+    MapOfCodec a -> do
+      res <- prettyViaCodec prettyViaValueCodec a
+      doc $ "mapOf" PP.<+> renderSmartDoc res
     ArrayCodec a -> do
       res <- prettyViaCodec prettyViaArrayCodec a
       doc $ "array" PP.<> PP.line PP.<> renderSmartDoc res

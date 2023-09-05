@@ -270,6 +270,12 @@ manyOf
 manyOf = ElementCodec . ManyOfCodec
 {-# INLINE manyOf #-}
 
+mapOf
+  :: Codec ValueCodec ctx a
+  -> Codec ValueCodec ctx [(Aeson.Key, a)]
+mapOf = ElementCodec . MapOfCodec
+{-# INLINE mapOf #-}
+
 manyOfList
   :: Codec ValueCodec ctx a
   -> Codec ValueCodec ctx [a]
