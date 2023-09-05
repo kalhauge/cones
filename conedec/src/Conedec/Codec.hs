@@ -29,6 +29,7 @@ module Conedec.Codec (
   ObjectCodec (..),
   toJSONViaCodec,
   parseJSONViaCodec,
+  toEncodingViaCodec,
   prettyCodec,
   debugCodec,
   -- parseJSONViaCodec,
@@ -47,6 +48,7 @@ import Data.Void
 
 -- aeson
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encoding as Aeson
 import qualified Data.Aeson.Key as Aeson
 import qualified Data.Aeson.KeyMap as KM
 import Data.Aeson.Types hiding (object, (.:))
@@ -74,6 +76,7 @@ import Data.Scientific hiding (scientific)
 
 import Control.Monad.Writer
 import qualified Data.Aeson.KeyMap as Aeson
+import Data.Foldable
 import Data.Proxy
 import Data.String
 import qualified Data.Text.Lazy.Encoding as Text
@@ -271,6 +274,45 @@ toJSONViaCodec c a = do
       pure mempty
     SingleCodec ca ->
       fmap V.singleton . toJSONViaCodec ca
+
+toEncodingViaCodec :: forall ctx m a. MonadFail m => Codec ValueCodec ctx a -> a -> m Encoding
+toEncodingViaCodec c a = do
+  expectOne $ destroy (\e t -> One <$> toEncodingViaValueCodec e t) c a
+ where
+  toEncodingViaValueCodec :: ValueCodec ctx t -> t -> m Encoding
+  toEncodingViaValueCodec = \case
+    StringCodec ->
+      pure . Aeson.text
+    BoolCodec ->
+      pure . Aeson.bool
+    NumberCodec ->
+      pure . Aeson.scientific
+    ObjectCodec oc ->
+      fmap Aeson.pairs . destroy toEncodingViaObjectCodec oc
+    ManyOfCodec oc -> \lst -> do
+      es <- V.mapM (toEncodingViaCodec oc) lst
+      pure (Aeson.list id (V.toList es))
+    MapOfCodec oc ->
+      fmap (Aeson.pairs . fold) . mapM (\(key, x) -> Aeson.pair key <$> toEncodingViaCodec oc x)
+    ArrayCodec oc ->
+      fmap (Aeson.list id) . destroy toEncodingViaArrayCodec oc
+    ExactValueCodec e ->
+      const $ pure (toEncoding e)
+
+  toEncodingViaObjectCodec :: ObjectCodec ctx t -> t -> m Aeson.Series
+  toEncodingViaObjectCodec = \case
+    EmptyObjectCodec -> \_ ->
+      pure mempty
+    FieldCodec name ca ->
+      fmap (Aeson.pair name) . toEncodingViaCodec ca
+
+  -- todo: this could be implemented faster if needed
+  toEncodingViaArrayCodec :: ArrayCodec ctx t -> t -> m [Encoding]
+  toEncodingViaArrayCodec = \case
+    EmptyArrayCodec -> \_ ->
+      pure mempty
+    SingleCodec ca ->
+      fmap pure . toEncodingViaCodec ca
 
 parseJSONViaCodec :: forall ctx a. Codec ValueCodec ctx a -> Value -> Parser a
 parseJSONViaCodec c =
