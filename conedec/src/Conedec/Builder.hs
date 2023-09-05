@@ -127,22 +127,22 @@ bimap
 bimap fa fb = dimap (pure . fa) (pure . fb)
 {-# INLINE bimap #-}
 
-data TaggedObjectCodec ctx t where
-  Tagged :: Aeson.Value -> Codec ObjectCodec ctx t -> TaggedObjectCodec ctx t
-
 untup :: Codec e ctx ((), b) -> Codec e ctx b
 untup = bimap ((),) snd
+
+data Tagged e ctx t where
+  Tagged :: Aeson.Value -> Codec e ctx t -> Tagged e ctx t
 
 tagged
   :: forall t ctx
    . (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
   => Aeson.Key
-  -> (forall m. CodecSpecMonad t TaggedObjectCodec ctx m => m ())
+  -> (forall m. CodecSpecMonad t (Tagged ObjectCodec) ctx m => m ())
   -> Codec ObjectCodec ctx t
 tagged tagfield o =
   annotateMistakes o $
     let
-      codec' :: Diagram t (Codec TaggedObjectCodec ctx)
+      codec' :: Diagram t (Codec (Tagged ObjectCodec) ctx)
       codec' = runCodecM o
 
       xcodec :: Diagram t (Codec ObjectCodec ctx)
@@ -158,11 +158,41 @@ tagged tagfield o =
      in
       SumCodec (runOrderM o) xcodec
 
-(//) :: Aeson.Value -> Codec ObjectCodec ctx t -> Codec TaggedObjectCodec ctx t
+taggedInto
+  :: forall t ctx
+   . (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
+  => Aeson.Key
+  -> Aeson.Key
+  -> (forall m. CodecSpecMonad t (Tagged ValueCodec) ctx m => m ())
+  -> Codec ObjectCodec ctx t
+taggedInto tagfield valuefield o =
+  annotateMistakes o $
+    let
+      codec' :: Diagram t (Codec (Tagged ValueCodec) ctx)
+      codec' = runCodecM o
+
+      xcodec :: Diagram t (Codec ObjectCodec ctx)
+      xcodec =
+        bmap
+          ( cunfold
+              ( \(Tagged tag c) ->
+                  let t = Two (ElementCodec $ FieldCodec tagfield (exact tag)) (ElementCodec $ FieldCodec valuefield c)
+                   in untup . ProductCodec btraverse $ t
+              )
+          )
+          codec'
+     in
+      SumCodec (runOrderM o) xcodec
+
+(//) :: Aeson.Value -> Codec e ctx t -> Codec (Tagged e) ctx t
 (//) k v = ElementCodec $ Tagged k v
+
+infix 1 //
 
 (~:) :: Aeson.Key -> Codec ValueCodec ctx t -> Codec ObjectCodec ctx t
 (~:) k v = ElementCodec $ FieldCodec k v
+
+infix 2 ~:
 
 arrayAll
   :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
