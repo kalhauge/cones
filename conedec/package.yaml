@@ -28,6 +28,7 @@ dependencies:
   - barbies
   - prettyprinter
   - mtl
+  - bytestring
 
 library:
   source-dirs: src

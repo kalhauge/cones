@@ -13,6 +13,7 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE StrictData #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -45,7 +46,7 @@ import Control.Monad.Writer
 
 -- text
 import qualified Data.Text as Text
-import qualified Data.Text.Lazy.Encoding as Text
+import qualified Data.Text.Encoding as Text
 
 -- cones
 import Barbies.Access hiding (Index)
@@ -61,10 +62,13 @@ import Prelude hiding (all, any, null)
 -- conedec
 import Conedec.Codec
 import qualified Data.Aeson as Aeson
+import Data.Bifunctor (first)
+import qualified Data.ByteString as BS
 import Data.Functor.Product
 import Data.Kind
 import Data.Proxy (Proxy (..))
 import Data.String
+import qualified Data.Text.Lazy.Encoding as TextLazy
 import qualified Data.Vector as V
 import GHC.TypeLits (KnownSymbol, symbolVal)
 import qualified Prettyprinter as PP
@@ -193,7 +197,7 @@ c <!> a =
     ( \a' ->
         withError
           (\msg -> "could not encode example: " <> fromString msg)
-          (PP.pretty . Text.decodeUtf8 . Aeson.encode <$> toJSONViaCodec c a')
+          (PP.pretty . TextLazy.decodeUtf8 . Aeson.encode <$> toJSONViaCodec c a')
     )
     c
 infixl 6 <!>
@@ -271,6 +275,22 @@ boundIntegral =
     (maybe (Left "out of bounds") Right . toBoundedInteger)
     scientific
 {-# INLINE boundIntegral #-}
+
+realFloat :: (RealFloat i) => Codec ValueCodec ctx i
+realFloat =
+  bimap
+    fromFloatDigits
+    toRealFloat
+    scientific
+{-# INLINE realFloat #-}
+
+-- | Might not work for all bytestrings
+byteStringUtf8 :: Codec ValueCodec ctx BS.ByteString
+byteStringUtf8 =
+  dimap
+    (first show . Text.decodeUtf8')
+    (Right . Text.encodeUtf8)
+    text
 
 -- infix 7 .:
 --
