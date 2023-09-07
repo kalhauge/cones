@@ -79,15 +79,15 @@ These are the builders:
 
 any
   :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
-  => (forall m. CodecSpecMonad t e ctx m => m ())
-  -> Codec e ctx t
+  => (forall m. CodecSpecMonad t e ctx ann m => m ())
+  -> Codec e ctx ann t
 any o = annotateMistakes o $ SumCodec (runOrderM o) (runCodecM o)
 {-# INLINE any #-}
 
 all
   :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
-  => (forall m. CodecSpecMonad t e ctx m => m ())
-  -> Codec e ctx t
+  => (forall m. CodecSpecMonad t e ctx ann m => m ())
+  -> Codec e ctx ann t
 all o = annotateMistakes o $ ProductCodec (runOrderM o) (runCodecM o)
 {-# INLINE all #-}
 
@@ -96,9 +96,9 @@ annotateMistakes
      , ApplicativeB (Diagram t)
      , LabeledB (Diagram t)
      )
-  => (forall m. CodecSpecMonad t e' ctx m => m ())
-  -> Codec e ctx a
-  -> Codec e ctx a
+  => (forall m. CodecSpecMonad t e' ctx ann m => m ())
+  -> Codec e ctx ann a
+  -> Codec e ctx ann a
 annotateMistakes o c' = fixMistakes c' mistakes
  where
   mistakes = bfoldMap (\(Pair (Const s) (Const (Sum a))) -> [(s, a) | a /= 1]) (bzip blabeled (runCountM o))
@@ -114,31 +114,31 @@ annotateMistakes o c' = fixMistakes c' mistakes
 dimap
   :: (b -> Either String a)
   -> (a -> Either String b)
-  -> Codec e ctx a
-  -> Codec e ctx b
+  -> Codec e ctx ann a
+  -> Codec e ctx ann b
 dimap = DimapCodec
 {-# INLINE dimap #-}
 
 bimap
   :: (b -> a)
   -> (a -> b)
-  -> Codec e ctx a
-  -> Codec e ctx b
+  -> Codec e ctx ann a
+  -> Codec e ctx ann b
 bimap fa fb = dimap (pure . fa) (pure . fb)
 {-# INLINE bimap #-}
 
-untup :: Codec e ctx ((), b) -> Codec e ctx b
+untup :: Codec e ctx ann ((), b) -> Codec e ctx ann b
 untup = bimap ((),) snd
 
-data Tagged e ctx t where
-  Tagged :: Aeson.Value -> Codec e ctx t -> Tagged e ctx t
+data Tagged e ctx ann t where
+  Tagged :: Aeson.Value -> Codec e ctx ann t -> Tagged e ctx ann t
 
 tagged
-  :: forall t ctx
+  :: forall t ctx ann
    . (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
   => Aeson.Key
-  -> (forall m. CodecSpecMonad t (Tagged ObjectCodec) ctx m => m ())
-  -> Codec ObjectCodec ctx t
+  -> (forall m. CodecSpecMonad t (Tagged ObjectCodec) ctx ann m => m ())
+  -> Codec ObjectCodec ctx ann t
 tagged tagfield o =
   annotateMistakes o $
     let
@@ -159,12 +159,12 @@ tagged tagfield o =
       SumCodec (runOrderM o) xcodec
 
 taggedInto
-  :: forall t ctx
+  :: forall t ctx ann
    . (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
   => Aeson.Key
   -> Aeson.Key
-  -> (forall m. CodecSpecMonad t (Tagged ValueCodec) ctx m => m ())
-  -> Codec ObjectCodec ctx t
+  -> (forall m. CodecSpecMonad t (Tagged ValueCodec) ctx ann m => m ())
+  -> Codec ObjectCodec ctx ann t
 taggedInto tagfield valuefield o =
   annotateMistakes o $
     let
@@ -184,43 +184,49 @@ taggedInto tagfield valuefield o =
      in
       SumCodec (runOrderM o) xcodec
 
-(//) :: Aeson.Value -> Codec e ctx t -> Codec (Tagged e) ctx t
+(//) :: Aeson.Value -> Codec e ctx ann t -> Codec (Tagged e) ctx ann t
 (//) k v = ElementCodec $ Tagged k v
 
 infix 1 //
 
-(~:) :: Aeson.Key -> Codec ValueCodec ctx t -> Codec ObjectCodec ctx t
+(~:) :: Aeson.Key -> Codec ValueCodec ctx ann t -> Codec ObjectCodec ctx ann t
 (~:) k v = ElementCodec $ FieldCodec k v
 
 infix 2 ~:
 
 arrayAll
   :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
-  => (forall m. CodecSpecMonad t ArrayCodec ctx m => m ())
-  -> Codec ValueCodec ctx t
+  => (forall m. CodecSpecMonad t ArrayCodec ctx ann m => m ())
+  -> Codec ValueCodec ctx ann t
 arrayAll = array . all
 {-# INLINE arrayAll #-}
 
 objectAll
   :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
-  => (forall m. CodecSpecMonad t ObjectCodec ctx m => m ())
-  -> Codec ValueCodec ctx t
+  => (forall m. CodecSpecMonad t ObjectCodec ctx ann m => m ())
+  -> Codec ValueCodec ctx ann t
 objectAll = object . all
 {-# INLINE objectAll #-}
 
-arrayAny :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t)) => (forall m. CodecSpecMonad t ArrayCodec ctx m => m ()) -> Codec ValueCodec ctx t
+arrayAny
+  :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
+  => (forall m. CodecSpecMonad t ArrayCodec ctx ann m => m ())
+  -> Codec ValueCodec ctx ann t
 arrayAny = array . any
 {-# INLINE arrayAny #-}
 
-objectAny :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t)) => (forall m. CodecSpecMonad t ObjectCodec ctx m => m ()) -> Codec ValueCodec ctx t
+objectAny
+  :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
+  => (forall m. CodecSpecMonad t ObjectCodec ctx ann m => m ())
+  -> Codec ValueCodec ctx ann t
 objectAny = object . any
 {-# INLINE objectAny #-}
 
-(<?>) :: Codec e ctx a -> Doc -> Codec e ctx a
+(<?>) :: Codec e ctx ann a -> Doc -> Codec e ctx ann a
 (<?>) = flip DocumentationCodec
 infixl 6 <?>
 
-(<!>) :: Codec ValueCodec ctx a -> a -> Codec ValueCodec ctx a
+(<!>) :: Codec ValueCodec ctx ann a -> a -> Codec ValueCodec ctx ann a
 c <!> a =
   ExampleCodec
     a
@@ -232,79 +238,81 @@ c <!> a =
     c
 infixl 6 <!>
 
-exact :: Aeson.Value -> Codec ValueCodec ctx ()
+exact :: Aeson.Value -> Codec ValueCodec ctx ann ()
 exact = ElementCodec . ExactValueCodec
 
-ref :: forall s ctx e a. (KnownSymbol s, Def s e ctx a) => Codec e ctx a
+type CodecDef s e ctx ann a = Def s ctx (Codec e ctx ann a)
+
+ref :: forall s ctx ann e a. (KnownSymbol s, CodecDef s e ctx ann a) => Codec e ctx ann a
 ref = ReferenceCodec (Ref @s) id
 
 -- \$values
 
-text :: Codec ValueCodec ctx Text.Text
+text :: Codec ValueCodec ctx ann Text.Text
 text = ElementCodec StringCodec
 {-# INLINE text #-}
 
-null :: Codec ValueCodec ctx ()
+null :: Codec ValueCodec ctx ann ()
 null = exact Aeson.Null
 {-# INLINE null #-}
 
-scientific :: Codec ValueCodec ctx Scientific
+scientific :: Codec ValueCodec ctx ann Scientific
 scientific = ElementCodec NumberCodec
 {-# INLINE scientific #-}
 
-bool :: Codec ValueCodec ctx Bool
+bool :: Codec ValueCodec ctx ann Bool
 bool = ElementCodec BoolCodec
 {-# INLINE bool #-}
 
-object :: Codec ObjectCodec ctx a -> Codec ValueCodec ctx a
+object :: Codec ObjectCodec ctx ann a -> Codec ValueCodec ctx ann a
 object = ElementCodec . ObjectCodec
 {-# INLINE object #-}
 
-array :: Codec ArrayCodec ctx a -> Codec ValueCodec ctx a
+array :: Codec ArrayCodec ctx ann a -> Codec ValueCodec ctx ann a
 array = ElementCodec . ArrayCodec
 {-# INLINE array #-}
 
 manyOf
-  :: Codec ValueCodec ctx a
-  -> Codec ValueCodec ctx (V.Vector a)
+  :: Codec ValueCodec ctx ann a
+  -> Codec ValueCodec ctx ann (V.Vector a)
 manyOf = ElementCodec . ManyOfCodec
 {-# INLINE manyOf #-}
 
 mapOf
-  :: Codec ValueCodec ctx a
-  -> Codec ValueCodec ctx [(Aeson.Key, a)]
+  :: Codec ValueCodec ctx ann a
+  -> Codec ValueCodec ctx ann [(Aeson.Key, a)]
 mapOf = ElementCodec . MapOfCodec
 {-# INLINE mapOf #-}
 
 manyOfList
-  :: Codec ValueCodec ctx a
-  -> Codec ValueCodec ctx [a]
+  :: Codec ValueCodec ctx ann a
+  -> Codec ValueCodec ctx ann [a]
 manyOfList = bimap V.fromList V.toList . manyOf
 {-# INLINE manyOfList #-}
 
-broken :: Codec e ctx a
+broken :: Codec e ctx ann a
 broken = BrokenCodec
 
-simply :: Coercible a b => Codec e ctx a -> Codec e ctx b
+simply :: Coercible a b => Codec e ctx ann a -> Codec e ctx ann b
 simply = bimap coerce coerce
 
-optional :: Codec ValueCodec ctx a -> Codec ValueCodec ctx (Maybe a)
+optional :: Codec ValueCodec ctx ann a -> Codec ValueCodec ctx ann (Maybe a)
 optional ca = SumCodec btraverse (MaybeD{ifNothing = null, ifJust = ca})
 
 class HasIgnore e where
-  ignore :: Codec e ctx ()
+  ignore :: Codec e ctx ann ()
 
-emptyArray :: Codec ArrayCodec ctx ()
+emptyArray :: Codec ArrayCodec ctx ann ()
 emptyArray = ElementCodec EmptyArrayCodec
 
-emptyObject :: Codec ObjectCodec ctx ()
+emptyObject :: Codec ObjectCodec ctx ann ()
 emptyObject = ElementCodec EmptyObjectCodec
 
 instance HasIgnore ValueCodec where ignore = null
 instance HasIgnore ArrayCodec where ignore = emptyArray
 instance HasIgnore ObjectCodec where ignore = emptyObject
 
-boundIntegral :: (Integral i, Bounded i) => Codec ValueCodec ctx i
+boundIntegral :: (Integral i, Bounded i) => Codec ValueCodec ctx ann i
 boundIntegral =
   dimap
     (pure . fromIntegral)
@@ -312,7 +320,7 @@ boundIntegral =
     scientific
 {-# INLINE boundIntegral #-}
 
-realFloat :: (RealFloat i) => Codec ValueCodec ctx i
+realFloat :: (RealFloat i) => Codec ValueCodec ctx ann i
 realFloat =
   bimap
     fromFloatDigits
@@ -321,7 +329,7 @@ realFloat =
 {-# INLINE realFloat #-}
 
 -- | Might not work for all bytestrings
-byteStringUtf8 :: Codec ValueCodec ctx BS.ByteString
+byteStringUtf8 :: Codec ValueCodec ctx ann BS.ByteString
 byteStringUtf8 =
   dimap
     (first show . Text.decodeUtf8')
@@ -330,23 +338,23 @@ byteStringUtf8 =
 
 -- infix 7 .:
 --
--- (.:) :: Aeson.Key -> Codec ValueCodec ctx c -> Codec ObjectCodec ctx c
+-- (.:) :: Aeson.Key -> Codec ValueCodec ctx ann c -> Codec ObjectCodec ctx c
 -- (.:) k v = ElementCodec $ FieldCodec k v
 
-class Monad m => CodecSpecMonad t e ctx m | m -> e t ctx where
-  specCodec :: (forall f. LensB (Diagram t) f a) -> Codec e ctx a -> m ()
+class Monad m => CodecSpecMonad t e ctx ann m | m -> e t ctx ann where
+  specCodec :: (forall f. LensB (Diagram t) f a) -> Codec e ctx ann a -> m ()
 
 newtype Access t a = Access {getAccess :: forall f. LensB (Diagram t) f a}
 
 infix 0 =:
 infix 0 <:
 
-(=:) :: CodecSpecMonad t e ctx m => Access t a -> Codec e ctx a -> m ()
+(=:) :: CodecSpecMonad t e ctx ann m => Access t a -> Codec e ctx ann a -> m ()
 (=:) (Access fn) = specCodec fn
 
 class SubValueCodec e where
   type SubAccess e t a
-  (<:) :: CodecSpecMonad t e ctx m => SubAccess e t a -> Codec ValueCodec ctx a -> m ()
+  (<:) :: CodecSpecMonad t e ctx ann m => SubAccess e t a -> Codec ValueCodec ctx ann a -> m ()
 
 instance SubValueCodec ArrayCodec where
   type SubAccess ArrayCodec t a = Access t a
@@ -377,26 +385,27 @@ at = given (pos @n)
 newtype OrderB b m g = OrderB (b (m `Compose` g) -> Ap m (Endo (b g)))
   deriving (Semigroup, Monoid) via (b (m `Compose` g) -> Ap m (Endo (b g)))
 
-newtype CodecB b e ctx = CodecB (Endo (b (Codec e ctx)))
+newtype CodecB b e ctx ann = CodecB (Endo (b (Codec e ctx)))
   deriving (Semigroup, Monoid) via Endo (b (Codec e ctx))
 
-data Order t e ctx = forall a.
+data Order t e ctx ann = forall a.
   OrderSpec
   { accessor :: forall f. LensB (Diagram t) f a
-  , codec :: Codec e ctx a
+  , codec :: Codec e ctx ann a
   }
 
-instance CodecSpecMonad t e ctx (Writer [Order t e ctx]) where
+instance CodecSpecMonad t e ctx ann (Writer [Order t e ctx ann]) where
   specCodec fn a = tell [OrderSpec fn a]
 
--- newtype CompleteM t (e :: Type -> Type -> Type) ctx m g a = CompleteM {getCompleteM :: Writer (Diagram t ExactlyOnce) a}
---   deriving (Functor, Applicative, Monad) via (ReaderT (Diagram t (m `Compose` g)) (Writer (Ap m (Endo (Diagram t g)))))
-
-newtype OrderM t (e :: Type -> Type -> Type) ctx m g a = OrderM {getOrderM :: Diagram t (m `Compose` g) -> Writer (Ap m (Endo (Diagram t g))) a}
+newtype OrderM t (e :: Type -> Type -> Type -> Type) ctx ann m g a = OrderM
+  { getOrderM
+      :: Diagram t (m `Compose` g)
+      -> Writer (Ap m (Endo (Diagram t g))) a
+  }
   deriving (Functor, Applicative, Monad) via (ReaderT (Diagram t (m `Compose` g)) (Writer (Ap m (Endo (Diagram t g)))))
 
-instance Applicative m => CodecSpecMonad t e ctx (OrderM t e ctx m g) where
-  specCodec :: (forall f. LensB (Diagram t) f a) -> Codec e ctx a -> OrderM t e ctx m g ()
+instance Applicative m => CodecSpecMonad t e ctx ann (OrderM t e ctx ann m g) where
+  specCodec :: (forall f. LensB (Diagram t) f a) -> Codec e ctx ann a -> OrderM t e ctx ann m g ()
   specCodec l _ = OrderM \diag -> do
     tell (Ap (Endo . setter <$> getter diag))
    where
@@ -406,7 +415,7 @@ instance Applicative m => CodecSpecMonad t e ctx (OrderM t e ctx m g) where
 
 runOrderM
   :: (Applicative m, ApplicativeB (Diagram t))
-  => OrderM t e ctx m g ()
+  => OrderM t e ctx ann m g ()
   -> (forall a. f a -> m (g a))
   -> Diagram t f
   -> m (Diagram t g)
@@ -415,11 +424,11 @@ runOrderM (OrderM m) fn x =
    in fmap (\e -> appEndo e (bpure undefined)) . coerce $ execWriter (m dt)
 {-# INLINE runOrderM #-}
 
-newtype CodecM t e ctx a = CodecM {getCodecM :: Writer (Endo (Diagram t (Codec e ctx))) a}
-  deriving (Functor, Applicative, Monad) via (Writer (Endo (Diagram t (Codec e ctx))))
+newtype CodecM t e ctx ann a = CodecM {getCodecM :: Writer (Endo (Diagram t (Codec e ctx ann))) a}
+  deriving (Functor, Applicative, Monad) via (Writer (Endo (Diagram t (Codec e ctx ann))))
 
-instance CodecSpecMonad t e ctx (CodecM t e ctx) where
-  specCodec :: (forall f. LensB (Diagram t) f a) -> Codec e ctx a -> CodecM t e ctx ()
+instance CodecSpecMonad t e ctx ann (CodecM t e ctx ann) where
+  specCodec :: (forall f. LensB (Diagram t) f a) -> Codec e ctx ann a -> CodecM t e ctx ann ()
   specCodec l ca = CodecM do
     tell (Endo $ setter ca)
    where
@@ -428,15 +437,15 @@ instance CodecSpecMonad t e ctx (CodecM t e ctx) where
 
 runCodecM
   :: (ApplicativeB (Diagram t))
-  => CodecM t e ctx ()
+  => CodecM t e ctx ann ()
   -> Diagram t (Codec e ctx)
 runCodecM (CodecM m) = appEndo (execWriter m) (bpure undefined)
 {-# INLINE runCodecM #-}
 
-newtype CountM t (e :: Type -> Type -> Type) ctx a = CountM {getCountM :: Writer (Endo (Diagram t (Const (Sum Int)))) a}
+newtype CountM t (e :: Type -> Type -> Type -> Type) ctx ann a = CountM {getCountM :: Writer (Endo (Diagram t (Const (Sum Int)))) a}
   deriving (Functor, Applicative, Monad) via (Writer (Endo (Diagram t (Const (Sum Int)))))
 
-instance CodecSpecMonad t e ctx (CountM t e ctx) where
+instance CodecSpecMonad t e ctx ann (CountM t e ctx ann) where
   specCodec l _ = CountM do
     tell (Endo incr)
    where
@@ -445,7 +454,7 @@ instance CodecSpecMonad t e ctx (CountM t e ctx) where
 
 runCountM
   :: (ApplicativeB (Diagram t))
-  => CountM t e ctx ()
+  => CountM t e ctx ann ()
   -> Diagram t (Const (Sum Int))
 runCountM (CountM m) = appEndo (execWriter m) (bpure mempty)
 {-# INLINE runCountM #-}
