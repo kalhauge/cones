@@ -1,7 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE BlockArguments #-}
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FunctionalDependencies #-}
@@ -13,81 +12,36 @@
 {-# LANGUAGE PolyKinds #-}
 {-# LANGUAGE QuantifiedConstraints #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Conedec.Codec (
   Codec (..),
   Ref (..),
   Def (..),
-  Doc,
   cunfold,
   destroy,
   build,
-  ValueCodec (..),
-  ArrayCodec (..),
-  ObjectCodec (..),
-  toJSONViaCodec,
-  parseJSONViaCodec,
-  toEncodingViaCodec,
-  prettyCodec,
-  debugCodec,
-  -- parseJSONViaCodec,
-  -- toJSONViaCodec,
-
-  -- helpers
-  WithError (..),
-  withError,
 ) where
 
 -- base
 import Control.Applicative
 import Data.Functor.Contravariant
+import Data.Kind
 import Data.Monoid hiding (Product, Sum)
-import Data.Void
-
--- aeson
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Encoding as Aeson
-import qualified Data.Aeson.Key as Aeson
-import qualified Data.Aeson.KeyMap as KM
-import Data.Aeson.Types hiding (object, (.:))
-
--- vector
-import qualified Data.Vector as V
+import GHC.TypeLits
 
 -- barbies
 import Barbies hiding (Void)
 
 -- mtl
 import Control.Monad.Reader
-import Control.Monad.State.Strict (StateT (..))
-
--- text
-import qualified Data.Text as Text
 
 -- cones
 import Data.Cone
 
--- scientific
-import Data.Scientific hiding (scientific)
-
--- prettyprinter
-
-import Control.Monad.Writer
-import qualified Data.Aeson.KeyMap as Aeson
-import Data.Foldable
-import Data.Kind
-import Data.Proxy
-import Data.String
-import qualified Data.Text.Lazy.Encoding as Text
-import GHC.TypeLits
-import qualified Prettyprinter as PP
-import qualified Prettyprinter.Render.Text as PP
-
 data Ref (s :: Symbol) = KnownSymbol s => Ref
 
-class Def (s :: Symbol) (e :: Type -> Type -> Type -> Type) ctx ann a | ctx s -> a e ann where
+class Def (s :: Symbol) (e :: Type -> Type -> Type -> Type) ctx ann a | ctx s -> a e where
   def :: Codec e ctx ann a
 
 {- | A redesign of the codec.
@@ -149,29 +103,7 @@ cunfold fn = \case
   AnnotateCodec dc c ->
     AnnotateCodec dc (cunfold fn c)
 
-data ValueCodec ctx ann a where
-  StringCodec :: ValueCodec ctx ann Text.Text
-  BoolCodec :: ValueCodec ctx ann Bool
-  NumberCodec :: ValueCodec ctx ann Scientific
-  ManyOfCodec :: Codec ValueCodec ctx ann a -> ValueCodec ctx ann (V.Vector a)
-  MapOfCodec :: Codec ValueCodec ctx ann a -> ValueCodec ctx ann [(Key, a)]
-  ArrayCodec :: Codec ArrayCodec ctx ann a -> ValueCodec ctx ann a
-  ObjectCodec :: Codec ObjectCodec ctx ann a -> ValueCodec ctx ann a
-  ExactValueCodec :: Value -> ValueCodec ctx ann ()
-
-data ObjectCodec ctx ann a where
-  EmptyObjectCodec :: ObjectCodec ctx ann ()
-  FieldCodec
-    :: Key
-    -> Codec ValueCodec ctx ann a
-    -> ObjectCodec ctx ann a
-
-data ArrayCodec ctx ann a where
-  EmptyArrayCodec :: ArrayCodec ctx ann ()
-  SingleCodec
-    :: Codec ValueCodec ctx ann a
-    -> ArrayCodec ctx ann a
-
+-- | Fold over a $a$ producing a value x or a string error
 destroy
   :: forall ctx ann e a m x
    . (MonadFail m, Monoid x)
@@ -195,6 +127,7 @@ destroy fn = \case
   AnnotateCodec _ c ->
     destroy fn c
 
+-- | Create an $a$ or an string error.
 build
   :: forall ctx ann e m a
    . (Alternative m, MonadFail m)
@@ -216,311 +149,3 @@ build fn = \case
     fn c
   AnnotateCodec _ c ->
     build fn c
-
-data ZeroOrMore a = Zero | One a | More
-  deriving (Show)
-
-instance Semigroup (ZeroOrMore a) where
-  Zero <> a = a
-  More <> _ = More
-  x <> a = case a of
-    Zero -> x
-    _ -> More
-
-instance Monoid (ZeroOrMore a) where
-  mempty = Zero
-
-expectOne :: MonadFail m => m (ZeroOrMore a) -> m a
-expectOne fn =
-  fn >>= \case
-    One a -> pure a
-    Zero -> fail "expected at least one element"
-    More -> fail "expected no more than one element"
-
-toJSONViaCodec :: forall ctx ann m a. MonadFail m => Codec ValueCodec ctx ann a -> a -> m Value
-toJSONViaCodec c a = do
-  expectOne $ destroy (\e t -> One <$> toJSONViaValueCodec e t) c a
- where
-  toJSONViaValueCodec :: ValueCodec ctx ann t -> t -> m Value
-  toJSONViaValueCodec = \case
-    StringCodec ->
-      pure . Aeson.String
-    BoolCodec ->
-      pure . Aeson.Bool
-    NumberCodec ->
-      pure . Aeson.Number
-    ObjectCodec oc ->
-      fmap Aeson.object . destroy toJSONViaObjectCodec oc
-    ManyOfCodec oc ->
-      fmap Aeson.Array . V.mapM (toJSONViaCodec oc)
-    MapOfCodec oc ->
-      fmap (Aeson.Object . Aeson.fromList) . mapM (\(key, x) -> (key,) <$> toJSONViaCodec oc x)
-    ArrayCodec oc ->
-      fmap Aeson.Array . destroy toJSONViaArrayCodec oc
-    ExactValueCodec e ->
-      const $ pure e
-
-  toJSONViaObjectCodec :: ObjectCodec ctx ann t -> t -> m [Pair]
-  toJSONViaObjectCodec = \case
-    EmptyObjectCodec -> \_ ->
-      pure []
-    FieldCodec name ca -> \a' ->
-      pure $ (name,) <$> toJSONViaCodec ca a'
-
-  toJSONViaArrayCodec :: ArrayCodec ctx ann t -> t -> m Array
-  toJSONViaArrayCodec = \case
-    EmptyArrayCodec -> \_ ->
-      pure mempty
-    SingleCodec ca ->
-      fmap V.singleton . toJSONViaCodec ca
-
-toEncodingViaCodec :: forall ctx ann m a. MonadFail m => Codec ValueCodec ctx ann a -> a -> m Encoding
-toEncodingViaCodec c a = do
-  expectOne $ destroy (\e t -> One <$> toEncodingViaValueCodec e t) c a
- where
-  toEncodingViaValueCodec :: ValueCodec ctx ann t -> t -> m Encoding
-  toEncodingViaValueCodec = \case
-    StringCodec ->
-      pure . Aeson.text
-    BoolCodec ->
-      pure . Aeson.bool
-    NumberCodec ->
-      pure . Aeson.scientific
-    ObjectCodec oc ->
-      fmap Aeson.pairs . destroy toEncodingViaObjectCodec oc
-    ManyOfCodec oc -> \lst -> do
-      es <- V.mapM (toEncodingViaCodec oc) lst
-      pure (Aeson.list id (V.toList es))
-    MapOfCodec oc ->
-      fmap (Aeson.pairs . fold) . mapM (\(key, x) -> Aeson.pair key <$> toEncodingViaCodec oc x)
-    ArrayCodec oc ->
-      fmap (Aeson.list id) . destroy toEncodingViaArrayCodec oc
-    ExactValueCodec e ->
-      const $ pure (toEncoding e)
-
-  toEncodingViaObjectCodec :: ObjectCodec ctx ann t -> t -> m Aeson.Series
-  toEncodingViaObjectCodec = \case
-    EmptyObjectCodec -> \_ ->
-      pure mempty
-    FieldCodec name ca ->
-      fmap (Aeson.pair name) . toEncodingViaCodec ca
-
-  -- todo: this could be implemented faster if needed
-  toEncodingViaArrayCodec :: ArrayCodec ctx ann t -> t -> m [Encoding]
-  toEncodingViaArrayCodec = \case
-    EmptyArrayCodec -> \_ ->
-      pure mempty
-    SingleCodec ca ->
-      fmap pure . toEncodingViaCodec ca
-
-parseJSONViaCodec :: forall ctx ann a. Codec ValueCodec ctx ann a -> Value -> Parser a
-parseJSONViaCodec c =
-  runReaderT $ build parseJSONViaValueCodec c
- where
-  parseJSONViaValueCodec :: forall t. ValueCodec ctx ann t -> ReaderT Value Parser t
-  parseJSONViaValueCodec cd = ReaderT $ case cd of
-    NumberCodec -> \case
-      Number s -> pure s
-      a -> typeMismatch "Number" a
-    StringCodec -> \case
-      String txt -> pure txt
-      v -> typeMismatch "String" v
-    BoolCodec -> \case
-      Bool b -> pure b
-      v -> typeMismatch "Bool" v
-    ManyOfCodec ca -> \case
-      Array arr -> V.mapM (runReaderT $ build parseJSONViaValueCodec ca) arr
-      v -> typeMismatch "Array" v
-    MapOfCodec ca -> \case
-      Object mp -> mapM (\(k, v) -> (k,) <$> runReaderT (build parseJSONViaValueCodec ca) v) $ Aeson.toList mp
-      v -> typeMismatch "Object" v
-    ArrayCodec ca ->
-      runArrayParser "no-name" (build parseJSONViaArrayCodec ca)
-    ObjectCodec ca ->
-      runObjectParser "no-name" (build parseJSONViaObjectCodec ca)
-    ExactValueCodec expected -> \actual ->
-      unless (expected == actual) do
-        fail $ "expected " ++ show expected ++ ", but encountered " ++ show actual
-
-  parseJSONViaObjectCodec :: ObjectCodec ctx ann t -> ObjectParser t
-  parseJSONViaObjectCodec = \case
-    EmptyObjectCodec ->
-      pure ()
-    FieldCodec name ca ->
-      mkObjectParser (parseJSONViaCodec ca) name
-
-  parseJSONViaArrayCodec :: ArrayCodec ctx ann t -> ArrayParser t
-  parseJSONViaArrayCodec = \case
-    EmptyArrayCodec ->
-      pure ()
-    SingleCodec ca ->
-      mkArrayParser (parseJSONViaCodec ca)
-
-newtype ObjectParser a = ObjectParser (Object -> Parser a)
-  deriving (Functor)
-  deriving (Applicative, Alternative, Monad, MonadFail) via (ReaderT Object Parser)
-
-runObjectParser :: String -> ObjectParser t -> Value -> Parser t
-runObjectParser n (ObjectParser f) = withObject n f
-
-mkObjectParser :: (Value -> Parser t) -> Key -> ObjectParser t
-mkObjectParser fn key = ObjectParser \obj ->
-  case KM.lookup key obj of
-    Just val -> fn val Aeson.<?> Key key
-    Nothing -> fail "not could not find element" Aeson.<?> Key key
-newtype ArrayParser a = ArrayParser (Array -> Int -> Parser (a, Int))
-  deriving (Functor)
-  deriving (Applicative, Alternative, Monad, MonadFail) via (ReaderT Array (StateT Int Parser))
-
-mkArrayParser :: (Value -> Parser t) -> ArrayParser t
-mkArrayParser fn = ArrayParser \arr i ->
-  case arr V.!? i of
-    Just val -> (,i + 1) <$> (fn val Aeson.<?> Index i)
-    Nothing -> fail "not enough elements in the array"
-
-runArrayParser :: String -> ArrayParser t -> Value -> Parser t
-runArrayParser n (ArrayParser f) = withArray n \arr ->
-  fst <$> f arr 0
-
-{- $prettyprinter
-Here:
--}
-
-instance IsString (Codec ValueCodec ctx ann ()) where
-  fromString = ElementCodec . ExactValueCodec . fromString
-
-newtype PrettyM a = PrettyM {runPrettyM :: ReaderT (Aeson.KeyMap ()) (Writer [(Key, Pretty)]) a}
-  deriving newtype (Functor, Applicative, Monad, MonadWriter [(Key, Pretty)], MonadReader (Aeson.KeyMap ()))
-
-newtype WithError a = WithError {runWithError :: Either String a}
-  deriving newtype (Functor, Applicative, Alternative, MonadPlus, Monad)
-
-instance MonadFail WithError where
-  fail = WithError . Left
-
-withError :: (String -> a) -> WithError a -> a
-withError hdl = either hdl id . runWithError
-
-type Pretty = PrettyM SmartDoc
-
-type Doc = PP.Doc Void
-
-data SmartDoc
-  = Doc (PP.Doc Void)
-  | AnyDoc [PP.Doc Void]
-  | AllDoc [PP.Doc Void]
-
-instance IsString SmartDoc where
-  fromString = Doc . fromString
-
-renderSmartDoc :: SmartDoc -> PP.Doc Void
-renderSmartDoc = \case
-  Doc d -> d
-  AnyDoc ds ->
-    PP.vcat ["+ " <> PP.nest 2 d | d <- ds]
-  AllDoc ds ->
-    PP.vcat ["* " <> PP.nest 2 d | d <- ds]
-
-doc :: PP.Doc Void -> PrettyM SmartDoc
-doc = pure . Doc
-
-prettyCodec :: forall ctx a. Codec ValueCodec ctx Doc a -> Pretty
-prettyCodec = prettyViaCodec prettyViaValueCodec
- where
-  prettyViaCodec :: (forall b. e ctx Doc b -> Pretty) -> Codec e ctx Doc t -> Pretty
-  prettyViaCodec fn = \case
-    BrokenCodec ->
-      pure ">broken<"
-    SumCodec order diag -> do
-      res <-
-        getAp $
-          diagramFold
-            order
-            ( \a -> Ap do
-                res <- prettyViaCodec fn a
-                pure case res of
-                  AnyDoc ds -> ds
-                  x -> [renderSmartDoc x]
-            )
-            diag
-      pure $ AnyDoc res
-    ProductCodec order diag -> do
-      res <-
-        getAp $
-          diagramFold
-            order
-            ( \a -> Ap do
-                res <- prettyViaCodec fn a
-                pure case res of
-                  AllDoc ds -> ds
-                  x -> [renderSmartDoc x]
-            )
-            diag
-      pure $ AllDoc res
-    ReferenceCodec (Ref :: Ref s) f -> do
-      let n = symbolVal (Proxy :: Proxy s)
-      let k = Aeson.fromString n
-      let ca = f (def @s)
-      alreadyMember <- asks (Aeson.member k)
-      unless alreadyMember do
-        tell [(k, prettyViaCodec fn ca)]
-      pure . Doc $ "<" <> PP.pretty n <> ">"
-    DimapCodec _ _ c ->
-      prettyViaCodec fn c
-    ElementCodec c ->
-      fn c
-    AnnotateCodec s c -> do
-      res <- prettyViaCodec fn c
-      pure . Doc $ renderSmartDoc res <> PP.line <> "-- " <> s
-
-  prettyViaValueCodec :: forall t. ValueCodec ctx Doc t -> Pretty
-  prettyViaValueCodec = \case
-    StringCodec ->
-      pure "<string>"
-    NumberCodec ->
-      pure "<number>"
-    BoolCodec ->
-      pure "<bool>"
-    ManyOfCodec a -> do
-      res <- prettyViaCodec prettyViaValueCodec a
-      doc $ "manyOf" PP.<+> renderSmartDoc res
-    MapOfCodec a -> do
-      res <- prettyViaCodec prettyViaValueCodec a
-      doc $ "mapOf" PP.<+> renderSmartDoc res
-    ArrayCodec a -> do
-      res <- prettyViaCodec prettyViaArrayCodec a
-      doc $ "array" PP.<> PP.line PP.<> renderSmartDoc res
-    ObjectCodec a -> do
-      res <- prettyViaCodec prettyViaObjectCodec a
-      doc $ "object" PP.<> PP.line PP.<> renderSmartDoc res
-    ExactValueCodec e ->
-      doc $ PP.pretty . Text.decodeUtf8 $ Aeson.encode e
-
-  prettyViaObjectCodec :: forall t. ObjectCodec ctx Doc t -> Pretty
-  prettyViaObjectCodec = \case
-    EmptyObjectCodec -> pure "<empty>"
-    FieldCodec k cd -> do
-      res <- prettyViaCodec prettyViaValueCodec cd
-      doc $ PP.hsep [PP.pretty (Aeson.toString k), ":", renderSmartDoc res]
-
-  prettyViaArrayCodec :: forall t. ArrayCodec ctx Doc t -> Pretty
-  prettyViaArrayCodec = \case
-    EmptyArrayCodec -> pure "<empty>"
-    SingleCodec cd ->
-      prettyViaCodec prettyViaValueCodec cd
-
-debugCodec :: Codec ValueCodec ctx Doc a -> IO ()
-debugCodec c = do
-  putStrLn "------"
-  let (res, deps) = runWriter $ runReaderT (runPrettyM $ prettyCodec c) Aeson.empty
-  PP.putDoc (renderSmartDoc res <> PP.line)
-  putStrLn "------"
-  go (Aeson.fromList $ map (\(a, _) -> (a, ())) deps) deps
-  putStrLn "------"
- where
-  go keys = \case
-    [] -> pure ()
-    (k, v) : xs -> do
-      let (res, deps) = runWriter $ runReaderT (runPrettyM v) keys
-      PP.putDoc $ "<" <> PP.pretty (Aeson.toText k) <> ">" <> " ::= " <> PP.nest 2 (renderSmartDoc res) <> PP.line
-      go (keys <> Aeson.fromList (map (\(a, _) -> (a, ())) deps)) (deps <> xs)

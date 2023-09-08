@@ -18,6 +18,7 @@
 import Data.Cone.TH
 
 import Conedec
+import Conedec.Json
 import qualified Data.Text as Text
 import Prelude hiding (all, any, product)
 
@@ -48,41 +49,40 @@ $(makeDiagram ''User)
 
 data V1
 
-instance Def "name" ValueCodec V1 Text.Text where unref = codecName
-instance Def "user" ValueCodec V1 User where unref = codecUser
-instance Def "color" ValueCodec V1 Color where unref = codecColor
+instance Def "name" ValueC V1 Doc Text.Text where
+  def =
+    text
+      <?> "Given and last name"
+        <!> "Jasper Christopher"
 
-codecColor :: Codec ValueCodec ctx Color
-codecColor = any do
-  #ifBlue =: "blue"
-  #ifRed =: "red"
-  #ifYellow =: "yellow"
+instance Def "color" ValueC V1 ann Color where
+  def = any do
+    #ifBlue =: "blue"
+    #ifRed =: "red"
+    #ifYellow =: "yellow"
 
-codecName :: Codec ValueCodec ctx Text.Text
-codecName =
-  text
-    <?> "Given and last name"
-      <!> "Jasper Christopher"
+instance Def "user" ValueC V1 Doc User where
+  def = codecUser
 
-codecContact2
-  :: Codec ValueCodec ctx Contact
-codecContact2 = object $ tagged "type" $ do
-  #ifEmail =: "email" // do
-    "email" ~: text
-  #ifPhone =: "phone" // all do
-    at @0 ~ "contry" <: boundIntegral
-    at @1 ~ "phone" <: text
-  #ifNoContact
-    =: "no-contact"
-    // emptyObject
-    <?> "Leave empty for no contact"
+-- codecContact2
+--   :: Codec ValueC ctx Doc Contact
+-- codecContact2 = object $ tagged "type" $ do
+--   #ifEmail =: "email" // do
+--     "email" ~: text
+--   #ifPhone =: "phone" // all do
+--     at @0 ~ "contry" <: boundIntegral
+--     at @1 ~ "phone" <: text
+--   #ifNoContact
+--     =: "no-contact"
+--     // emptyObject
+--     <?> "Leave empty for no contact"
 
 codecUser
-  :: ( Def "name" ValueCodec ctx Text.Text
-     , Def "user" ValueCodec ctx User
-     , Def "color" ValueCodec ctx Color
+  :: ( Def "name" ValueC ctx Doc Text.Text
+     , Def "user" ValueC ctx Doc User
+     , Def "color" ValueC ctx Doc Color
      )
-  => Codec ValueCodec ctx User
+  => Codec ValueC ctx Doc User
 codecUser =
   object
     ( all do
@@ -111,4 +111,4 @@ codecUser =
 
 main :: IO ()
 main = do
-  debugCodec @V1 codecContact2
+  debugCodec @V1 (ref @"user")
