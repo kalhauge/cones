@@ -29,9 +29,14 @@ module Conedec.Builder where
 
 -- base
 import Control.Applicative
+import Data.Bifunctor (first)
 import Data.Coerce
 import Data.Functor.Identity
+import Data.Kind
 import Data.Monoid
+import Data.Proxy (Proxy (..))
+import Data.String
+import GHC.TypeLits (KnownSymbol, symbolVal)
 
 -- aeson
 import qualified Data.Aeson.Key as Aeson
@@ -58,19 +63,25 @@ import Data.Functor.Compose
 import GHC.OverloadedLabels (IsLabel, fromLabel)
 import Prelude hiding (all, any, null)
 
+-- aeson
+import qualified Data.Aeson as Aeson
+
+-- bytestring
+import qualified Data.ByteString as BS
+
+-- text
+import qualified Data.Text.Lazy.Encoding as TextLazy
+
+-- vector
+import qualified Data.Vector as V
+
+-- prettyprinter
+import qualified Prettyprinter as PP
+
 -- conedec
 import Conedec.Codec
 import Conedec.Json
-import qualified Data.Aeson as Aeson
-import Data.Bifunctor (first)
-import qualified Data.ByteString as BS
-import Data.Kind
-import Data.Proxy (Proxy (..))
-import Data.String
-import qualified Data.Text.Lazy.Encoding as TextLazy
-import qualified Data.Vector as V
-import GHC.TypeLits (KnownSymbol, symbolVal)
-import qualified Prettyprinter as PP
+import Conedec.Json.Doc
 
 {- $builders
 These are the builders:
@@ -225,14 +236,17 @@ infixl 6 <?>
 
 infixl 6 <!>
 
-(<!>) :: Codec ValueC ctx Doc a -> a -> Codec ValueC ctx Doc a
-c <!> a =
-  AnnotateCodec
-    ( withError
-        (\msg -> "could not encode example: " <> fromString msg)
-        $ PP.pretty . TextLazy.decodeUtf8 . Aeson.encode <$> toJSONViaCodec c a
-    )
-    c
+class FromExample e ann where
+  (<!>) :: Codec e ctx ann a -> a -> Codec e ctx ann a
+
+instance FromExample ValueC Doc where
+  c <!> a =
+    AnnotateCodec
+      ( withError
+          (\msg -> "could not encode example: " <> fromString msg)
+          $ PP.pretty . TextLazy.decodeUtf8 . Aeson.encode <$> toJSONViaCodec c a
+      )
+      c
 
 exact :: Aeson.Value -> Codec ValueC ctx ann ()
 exact = ElementCodec . ExactValueCodec

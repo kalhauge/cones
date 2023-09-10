@@ -5,7 +5,7 @@ cabal-version: 1.12
 -- see: https://github.com/sol/hpack
 
 name:           conedec
-version:        0.1.0
+version:        0.2.0
 synopsis:       A cone based codec implementation
 description:    A cone based codec implementation
 author:         Christian Gram Kalhauge
@@ -23,6 +23,7 @@ library
       Conedec.Builder
       Conedec.Codec
       Conedec.Json
+      Conedec.Json.Doc
   other-modules:
       Paths_conedec
   hs-source-dirs:

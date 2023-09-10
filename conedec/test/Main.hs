@@ -19,6 +19,8 @@ import Data.Cone.TH
 
 import Conedec
 import Conedec.Json
+import Conedec.Json.Doc (debugCodec)
+import Data.String
 import qualified Data.Text as Text
 import Prelude hiding (all, any, product)
 
@@ -49,7 +51,7 @@ $(makeDiagram ''User)
 
 data V1
 
-instance Def "name" ValueC V1 Doc Text.Text where
+instance (IsString ann, FromExample ValueC ann) => Def "name" ValueC V1 ann Text.Text where
   def =
     text
       <?> "Given and last name"
@@ -61,7 +63,7 @@ instance Def "color" ValueC V1 ann Color where
     #ifRed =: "red"
     #ifYellow =: "yellow"
 
-instance Def "user" ValueC V1 Doc User where
+instance (IsString ann, FromExample ValueC ann) => Def "user" ValueC V1 ann User where
   def = codecUser
 
 -- codecContact2
@@ -78,11 +80,13 @@ instance Def "user" ValueC V1 Doc User where
 --     <?> "Leave empty for no contact"
 
 codecUser
-  :: ( Def "name" ValueC ctx Doc Text.Text
-     , Def "user" ValueC ctx Doc User
-     , Def "color" ValueC ctx Doc Color
+  :: ( IsString ann
+     , FromExample ValueC ann
+     , Def "name" ValueC ctx ann Text.Text
+     , Def "user" ValueC ctx ann User
+     , Def "color" ValueC ctx ann Color
      )
-  => Codec ValueC ctx Doc User
+  => Codec ValueC ctx ann User
 codecUser =
   object
     ( all do

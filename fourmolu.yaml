@@ -1,2 +1,11 @@
 function-arrows: leading
 indentation: 2
+fixities:
+  - infixr 9  .
+  - infixr 5  ++
+  - infixl 4  <$
+  - infixl 1  >>, >>=
+  - infixr 1  =<<
+  - infixr 0  $, $!
+  - infixl 4 <*>, <*, *>, <**>
+  - infixl 6 <?>, <!
