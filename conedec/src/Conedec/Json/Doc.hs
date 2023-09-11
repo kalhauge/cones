@@ -193,7 +193,7 @@ renderSmartDoc = \case
   AnyDoc False ds ->
     PP.vcat ["+ " <> PP.nest 2 d | d <- ds]
   AnyDoc True [] -> "null"
-  AnyDoc True [d] -> d <> "?"
+  AnyDoc True [d] -> "nullable" PP.<+> d
   AnyDoc True ds ->
     PP.vcat ["? " <> PP.nest 2 d | d <- ds]
   AllDoc ds ->
@@ -206,7 +206,7 @@ renderSmartDoc' = \case
   AnyDoc False ds ->
     PP.line <> PP.vcat ["+ " <> PP.nest 2 d | d <- ds]
   AnyDoc True [] -> "null"
-  AnyDoc True [d] -> d <> "?"
+  AnyDoc True [d] -> "nullable" PP.<+> d
   AnyDoc True ds ->
     PP.line <> PP.vcat ["? " <> PP.nest 2 d | d <- ds]
   AllDoc ds ->
