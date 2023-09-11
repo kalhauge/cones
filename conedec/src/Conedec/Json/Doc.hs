@@ -138,16 +138,16 @@ prettyCodec = prettyViaCodec' prettyViaValueCodec
       pure "<bool>"
     ManyOfCodec a -> do
       res <- prettyViaCodec' prettyViaValueCodec a
-      doc $ "manyOf" PP.<> renderSmartDoc' res
+      doc $ "manyOf" PP.<+> renderSmartDoc' res
     MapOfCodec a -> do
       res <- prettyViaCodec' prettyViaValueCodec a
-      doc $ "mapOf" PP.<> renderSmartDoc' res
+      doc $ "mapOf" PP.<+> renderSmartDoc' res
     ArrayCodec a -> do
       res <- prettyViaCodec' prettyViaArrayCodec a
-      doc $ "array" PP.<> renderSmartDoc' res
+      doc $ "array" PP.<+> renderSmartDoc' res
     ObjectCodec a -> do
       res <- prettyViaCodec' prettyViaObjectCodec a
-      doc $ "object" PP.<> renderSmartDoc' res
+      doc $ "object" PP.<+> renderSmartDoc' res
     ExactValueCodec e ->
       case e of
         Aeson.Null -> do
