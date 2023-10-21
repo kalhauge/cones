@@ -89,14 +89,14 @@ These are the builders:
 
 any
   :: (IsColimit t, TraversableB (Diagram t))
-  => (forall m. CodecSpecMonad t e ctx ann m => m ())
+  => (forall m. (CodecSpecMonad t e ctx ann m) => m ())
   -> Codec e ctx ann t
 any o = SumCodec (runOrderM o) (runCodecM o)
 {-# INLINE any #-}
 
 all
   :: (IsLimit t, TraversableB (Diagram t))
-  => (forall m. CodecSpecMonad t e ctx ann m => m ())
+  => (forall m. (CodecSpecMonad t e ctx ann m) => m ())
   -> Codec e ctx ann t
 all o = ProductCodec (runOrderM o) (runCodecM o)
 {-# INLINE all #-}
@@ -147,7 +147,7 @@ tagged
   :: forall t ctx ann
    . (IsColimit t, TraversableB (Diagram t))
   => Aeson.Key
-  -> (forall m. CodecSpecMonad t (Tagged ObjectC) ctx ann m => m ())
+  -> (forall m. (CodecSpecMonad t (Tagged ObjectC) ctx ann m) => m ())
   -> Codec ObjectC ctx ann t
 tagged tagfield o =
   let
@@ -172,7 +172,7 @@ taggedInto
    . (IsColimit t, TraversableB (Diagram t))
   => Aeson.Key
   -> Aeson.Key
-  -> (forall m. CodecSpecMonad t (Tagged ValueC) ctx ann m => m ())
+  -> (forall m. (CodecSpecMonad t (Tagged ValueC) ctx ann m) => m ())
   -> Codec ObjectC ctx ann t
 taggedInto tagfield valuefield o =
   let
@@ -204,30 +204,30 @@ infix 2 ~:
 
 arrayAll
   :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
-  => (forall m. CodecSpecMonad t ArrayC ctx ann m => m ())
+  => (forall m. (CodecSpecMonad t ArrayC ctx ann m) => m ())
   -> Codec ValueC ctx ann t
-arrayAll = array . all
+arrayAll fn = array (all fn)
 {-# INLINE arrayAll #-}
 
 objectAll
   :: (IsLimit t, TraversableB (Diagram t), LabeledB (Diagram t))
-  => (forall m. CodecSpecMonad t ObjectC ctx ann m => m ())
+  => (forall m. (CodecSpecMonad t ObjectC ctx ann m) => m ())
   -> Codec ValueC ctx ann t
-objectAll = object . all
+objectAll fn = object (all fn)
 {-# INLINE objectAll #-}
 
 arrayAny
   :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
-  => (forall m. CodecSpecMonad t ArrayC ctx ann m => m ())
+  => (forall m. (CodecSpecMonad t ArrayC ctx ann m) => m ())
   -> Codec ValueC ctx ann t
-arrayAny = array . any
+arrayAny fn = array (any fn)
 {-# INLINE arrayAny #-}
 
 objectAny
   :: (IsColimit t, TraversableB (Diagram t), LabeledB (Diagram t))
-  => (forall m. CodecSpecMonad t ObjectC ctx ann m => m ())
+  => (forall m. (CodecSpecMonad t ObjectC ctx ann m) => m ())
   -> Codec ValueC ctx ann t
-objectAny = object . any
+objectAny fn = object (any fn)
 {-# INLINE objectAny #-}
 
 (<?>) :: Codec e ctx ann a -> ann -> Codec e ctx ann a
@@ -301,7 +301,7 @@ manyOfList = bimap V.fromList V.toList . manyOf
 broken :: Codec e ctx ann a
 broken = BrokenCodec
 
-simply :: Coercible a b => Codec e ctx ann a -> Codec e ctx ann b
+simply :: (Coercible a b) => Codec e ctx ann a -> Codec e ctx ann b
 simply = bimap coerce coerce
 
 optional :: Codec ValueC ctx ann a -> Codec ValueC ctx ann (Maybe a)
@@ -349,7 +349,7 @@ byteStringUtf8 =
 -- (.:) :: Aeson.Key -> Codec ValueC ctx ann c -> Codec ObjectC ctx c
 -- (.:) k v = ElementCodec $ FieldCodec k v
 
-class Monad m => CodecSpecMonad t e ctx ann m | m -> e t ctx ann where
+class (Monad m) => CodecSpecMonad t e ctx ann m | m -> e t ctx ann where
   specCodec :: (forall f. LensB (Diagram t) f a) -> Codec e ctx ann a -> m ()
 
 newtype Access t a = Access {getAccess :: forall f. LensB (Diagram t) f a}
@@ -357,12 +357,12 @@ newtype Access t a = Access {getAccess :: forall f. LensB (Diagram t) f a}
 infix 0 =:
 infix 0 <:
 
-(=:) :: CodecSpecMonad t e ctx ann m => Access t a -> Codec e ctx ann a -> m ()
+(=:) :: (CodecSpecMonad t e ctx ann m) => Access t a -> Codec e ctx ann a -> m ()
 (=:) (Access fn) = specCodec fn
 
 class SubValueCodec e where
   type SubAccess e t a
-  (<:) :: CodecSpecMonad t e ctx ann m => SubAccess e t a -> Codec ValueC ctx ann a -> m ()
+  (<:) :: (CodecSpecMonad t e ctx ann m) => SubAccess e t a -> Codec ValueC ctx ann a -> m ()
 
 instance SubValueCodec ArrayC where
   type SubAccess ArrayC t a = Access t a
@@ -384,7 +384,7 @@ instance (HasB (Diagram t) l a, LensesB (Diagram t)) => IsLabel l (Access t a) w
 instance (HasB (Diagram t) l a, KnownSymbol l, LensesB (Diagram t)) => IsLabel l (NamedAccess t a) where
   fromLabel = NamedAccess (fromLabel @l) (Aeson.fromString (symbolVal (Proxy :: Proxy l)))
 
-given :: forall t a. LensesB (Diagram t) => (forall f. Diagram t f -> f a) -> Access t a
+given :: forall t a. (LensesB (Diagram t)) => (forall f. Diagram t f -> f a) -> Access t a
 given fn = Access $ getLensB (fn blenses)
 
 at :: forall n t a. (IxB (Diagram t) n a, LensesB (Diagram t)) => Access t a
@@ -412,7 +412,7 @@ newtype OrderM t (e :: Type -> Type -> Type -> Type) ctx ann m g a = OrderM
   }
   deriving (Functor, Applicative, Monad) via (ReaderT (Diagram t (m `Compose` g)) (Writer (Ap m (Endo (Diagram t g)))))
 
-instance Applicative m => CodecSpecMonad t e ctx ann (OrderM t e ctx ann m g) where
+instance (Applicative m) => CodecSpecMonad t e ctx ann (OrderM t e ctx ann m g) where
   specCodec :: (forall f. LensB (Diagram t) f a) -> Codec e ctx ann a -> OrderM t e ctx ann m g ()
   specCodec l _ = OrderM \diag -> do
     tell (Ap (Endo . setter <$> getter diag))
