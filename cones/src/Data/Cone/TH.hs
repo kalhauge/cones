@@ -360,8 +360,11 @@ makeDiagramLite n =
  where
   mkCoconname idt = "if" <> idt
 
-covbType :: (Quote m) => Name -> m Type -> m VarBangType
-covbType n = varBangType n . bangType (bang noSourceUnpackedness sourceLazy)
+covbType :: Name -> Q Type -> Q VarBangType
+covbType n qt = do
+  b <- isExtEnabled StrictData
+  let x = if b then sourceLazy else noSourceStrictness
+  varBangType n $ bangType (bang noSourceUnpackedness x) qt
 
 mkType :: Name -> [Type] -> Q Type
 mkType n = foldl (\a t -> a `appT` pure t) (conT n)
