@@ -264,7 +264,7 @@ getDiagramSpec name = do
   --  makeDiagram currently does not support: TySynD Jvmhs.Data.Code.ByteCodeInst [] (AppT (ConT Language.JVM.ByteCode.ByteCodeInst) (ConT Language.JVM.Stage.High))
   dsType <- mkType nm (map snd ts)
   let
-    replaceDeep :: forall d. Data d => d -> d
+    replaceDeep :: forall d. (Data d) => d -> d
     replaceDeep t = case eqT of
       Just (Refl :: d :~: Type) -> case t of
         VarT x -> fromMaybe (VarT x) $ List.lookup x ts
@@ -360,8 +360,8 @@ makeDiagramLite n =
  where
   mkCoconname idt = "if" <> idt
 
-covbType :: Quote m => Name -> m Type -> m VarBangType
-covbType n = varBangType n . bangType (bang noSourceUnpackedness noSourceStrictness)
+covbType :: (Quote m) => Name -> m Type -> m VarBangType
+covbType n = varBangType n . bangType (bang noSourceUnpackedness sourceLazy)
 
 mkType :: Name -> [Type] -> Q Type
 mkType n = foldl (\a t -> a `appT` pure t) (conT n)
@@ -371,5 +371,5 @@ typeName = \case
   PlainTV t _ -> t
   KindedTV t _ _ -> t
 
-mkTupleT :: Quote m => [m Type] -> m Type
+mkTupleT :: (Quote m) => [m Type] -> m Type
 mkTupleT ts = foldl appT (conT $ tupleTypeName (length ts)) ts
