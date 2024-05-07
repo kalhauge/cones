@@ -20,19 +20,19 @@ module Conedec.Json.Doc (
 ) where
 
 -- base
+import Data.Monoid
 import Data.Proxy
 import Data.String
 import Data.Void
 import GHC.TypeLits
 
--- mtl
-import Control.Monad.Reader
-import Control.Monad.Writer
-
 -- aeson
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Aeson
 import qualified Data.Aeson.KeyMap as Aeson
+
+-- mtl
+import Control.Monad.State
 
 -- cone
 import Data.Cone
@@ -47,7 +47,7 @@ import qualified Prettyprinter.Render.Text as PP
 -- condec
 import Conedec.Codec
 import Conedec.Json
-import Control.Monad.State
+import Control.Monad
 
 data PrettyState = PrettyState
   { knownSymbols :: !(Aeson.KeyMap ())

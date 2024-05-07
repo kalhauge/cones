@@ -28,10 +28,12 @@ module Conedec.Json (
 
 -- base
 import Control.Applicative
+import Control.Monad
 import Data.Foldable
 import Data.String
 
 -- mtl
+import Control.Monad.Except hiding (withError)
 import Control.Monad.Reader
 import Control.Monad.State
 
@@ -79,7 +81,7 @@ data ArrayC ctx ann a where
 
 toJSONViaCodec
   :: forall ctx ann m a
-   . MonadFail m
+   . (MonadFail m)
   => Codec ValueC ctx ann a
   -> a
   -> m Aeson.Value
@@ -121,7 +123,7 @@ toJSONViaCodec c a = do
 
 toEncodingViaCodec
   :: forall ctx ann m a
-   . MonadFail m
+   . (MonadFail m)
   => Codec ValueC ctx ann a
   -> a
   -> m Aeson.Encoding
@@ -255,18 +257,18 @@ instance Semigroup (ZeroOrMore a) where
 instance Monoid (ZeroOrMore a) where
   mempty = Zero
 
-expectOne :: MonadFail m => m (ZeroOrMore a) -> m a
+expectOne :: (MonadFail m) => m (ZeroOrMore a) -> m a
 expectOne fn =
   fn >>= \case
     One a -> pure a
     Zero -> fail "expected at least one element"
     More -> fail "expected no more than one element"
 
-newtype WithError a = WithError {runWithError :: Either String a}
+newtype WithError a = WithError {runWithError :: Except [String] a}
   deriving newtype (Functor, Applicative, Alternative, MonadPlus, Monad)
 
 instance MonadFail WithError where
-  fail = WithError . Left
+  fail = WithError . throwError . (: [])
 
-withError :: (String -> a) -> WithError a -> a
-withError hdl = either hdl id . runWithError
+withError :: ([String] -> a) -> WithError a -> a
+withError hdl = either hdl id . runExcept . runWithError

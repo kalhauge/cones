@@ -27,14 +27,12 @@ module Conedec.Codec (
 import Control.Applicative
 import Data.Functor.Contravariant
 import Data.Kind
+import Control.Monad
 import Data.Monoid hiding (Product, Sum)
 import GHC.TypeLits
 
 -- barbies
 import Barbies hiding (Void)
-
--- mtl
-import Control.Monad.Reader
 
 -- cones
 import Data.Cone

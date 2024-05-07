@@ -243,7 +243,7 @@ instance FromExample ValueC Doc where
   c <!> a =
     AnnotateCodec
       ( withError
-          (\msg -> "could not encode example: " <> fromString msg)
+          (\msg -> "could not encode example: " <> fromString (unlines msg))
           $ PP.pretty . TextLazy.decodeUtf8 . Aeson.encode <$> toJSONViaCodec c a
       )
       c

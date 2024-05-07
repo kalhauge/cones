@@ -16,8 +16,7 @@ ghc-options:
 
 extra-source-files:
   - package.yaml
-  - ../LICENSE
-  - ../README.md
+  - LICENSE
 
 dependencies:
   - base >= 4.10 && < 4.19
