@@ -32,7 +32,7 @@ library
   build-depends:
       aeson
     , barbies
-    , base >=4.10 && <4.20
+    , base >=4.10 && <4.21
     , bytestring
     , cones
     , mtl
@@ -53,7 +53,7 @@ test-suite conedec-test
   build-depends:
       aeson
     , barbies
-    , base >=4.10 && <4.20
+    , base >=4.10 && <4.21
     , bytestring
     , conedec
     , cones

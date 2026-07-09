@@ -29,7 +29,7 @@ library
   ghc-options: -Wall
   build-depends:
       barbies
-    , base >=4.10 && <4.20
+    , base >=4.10 && <4.21
     , template-haskell
   default-language: Haskell2010
 
@@ -43,7 +43,7 @@ test-suite cones-test
   ghc-options: -Wall
   build-depends:
       barbies
-    , base >=4.10 && <4.20
+    , base >=4.10 && <4.21
     , cones
     , template-haskell
   default-language: Haskell2010
